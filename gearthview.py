@@ -325,7 +325,7 @@ def startGeoDrink_Server(self):
 
                 crsSrc = QgsCoordinateReferenceSystem(4326)
                 crsDest = QgsCoordinateReferenceSystem(srs)
-                xform = QgsCoordinateTransform(crsSrc, crsDest)
+                xform = QgsCoordinateTransform(crsSrc, crsDest, QgsProject.instance())
 
                 GEraggio = (lookatRange - Zeta) / 2.
                 raggio = GEraggio
@@ -407,7 +407,7 @@ def startGeoDrink_Server(self):
 
                 crsSrc = QgsCoordinateReferenceSystem(4326)
                 crsDest = QgsCoordinateReferenceSystem(srs)
-                xform = QgsCoordinateTransform(crsSrc, crsDest)
+                xform = QgsCoordinateTransform(crsSrc, crsDest, QgsProject.instance())
 
                 GEraggio = (lookatRange - Zeta) / 2.
                 raggio = GEraggio
@@ -476,7 +476,7 @@ def QGEarth_addPoint(self):
             srs = layer.crs();
             crsSrc = QgsCoordinateReferenceSystem(4326)
             crsDest = QgsCoordinateReferenceSystem(srs)
-            xform = QgsCoordinateTransform(crsSrc, crsDest)
+            xform = QgsCoordinateTransform(crsSrc, crsDest, QgsProject.instance())
             pt = xform.transform(QgsPointXY(lon, lat))
             gPnt = QgsGeometry.fromPoint(QgsPointXY(pt.x(),pt.y()))
 
@@ -523,6 +523,7 @@ def GDX_Publisher(self):
 
     global webserverDir
     mapCanvas = self.iface.mapCanvas()
+    qgisProject = QgsProject.instance()
 
     adesso = str(datetime.datetime.now())
     adesso = adesso.replace(" ","_")
@@ -565,7 +566,7 @@ def GDX_Publisher(self):
     mapSettings.setOutputSize(QSize(width, height))
 
     lst = []
-    layerTreeRoot = QgsProject.instance().layerTreeRoot()
+    layerTreeRoot = qgisProject.layerTreeRoot()
     for id in layerTreeRoot.findLayerIds():
         node = layerTreeRoot.findLayer(id)
         lst.append(id)
@@ -595,7 +596,7 @@ def GDX_Publisher(self):
     layer = mapCanvas.currentLayer()
     crsSrc = srs
     crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
-    xform = QgsCoordinateTransform(crsSrc, crsDest)
+    xform = QgsCoordinateTransform(crsSrc, crsDest, qgisProject)
 
     x1 = mapRect.xMinimum()
     y1 = mapRect.yMinimum()
@@ -824,7 +825,7 @@ def GDX_Publisher(self):
 
             crsSrc = layer.crs();
             crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
-            xform = QgsCoordinateTransform(crsSrc, crsDest)
+            xform = QgsCoordinateTransform(crsSrc, crsDest, qgisProject)
 
 #----------------------------------------------------------------------------
 #  Trasformo la finestra video in coordinate layer,
@@ -839,7 +840,7 @@ def GDX_Publisher(self):
 
             crs2 = mapCanvas.mapSettings().destinationCrs()
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
-            xform2   = QgsCoordinateTransform(crs2, crsDest2)
+            xform2   = QgsCoordinateTransform(crs2, crsDest2, qgisProject)
 
             pt0 = xform2.transform(QgsPointXY(xMin, yMin))
             pt1 = xform2.transform(QgsPointXY(xMax, yMax))
@@ -1034,6 +1035,7 @@ def GDX_Publisher2(self, kml):
 
     global webserverDir
     mapCanvas = self.iface.mapCanvas()
+    qgisProject = QgsProject.instance()
 
     adesso = str(datetime.datetime.now())
     adesso = adesso.replace(" ","_")
@@ -1089,7 +1091,7 @@ def GDX_Publisher2(self, kml):
     layer = mapCanvas.currentLayer()
     crsSrc = srs  # QgsCoordinateReferenceSystem(layer.crs())   # prendere quello attuale
     crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
-    xform = QgsCoordinateTransform(crsSrc, crsDest)
+    xform = QgsCoordinateTransform(crsSrc, crsDest, qgisProject)
 
 
     x1 = mapRect.xMinimum()
@@ -1205,7 +1207,7 @@ def GDX_Publisher2(self, kml):
 
             crsSrc = layer.crs();
             crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
-            xform = QgsCoordinateTransform(crsSrc, crsDest)
+            xform = QgsCoordinateTransform(crsSrc, crsDest, qgisProject)
 
             boundBox = mapCanvas.extent()
 
@@ -1217,7 +1219,7 @@ def GDX_Publisher2(self, kml):
 
             crs2 = mapCanvas.mapSettings().destinationCrs()
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
-            xform2   = QgsCoordinateTransform(crs2, crsDest2)
+            xform2   = QgsCoordinateTransform(crs2, crsDest2, qgisProject)
 
             pt0 = xform2.transform(QgsPointXY(xMin, yMin))
             pt1 = xform2.transform(QgsPointXY(xMax, yMax))
