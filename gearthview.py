@@ -849,7 +849,7 @@ def GDX_Publisher(self):
             # show some information about the feature
 #  For MultiPoint    http://gis.stackexchange.com/questions/55067/how-to-convert-multipoint-layer-to-point
 
-                if geom.type() == QGis.Point:
+                if geom.type() == QgsWkbTypes.PointGeometry:
                     elem = geom.asPoint()
                     x1 = elem.x()
                     y1 = elem.y()
@@ -894,7 +894,7 @@ def GDX_Publisher(self):
                     kml.write ('    </Placemark>\n')
 
 
-                elif geom.type() == QGis.Line:
+                elif geom.type() == QgsWkbTypes.LineGeometry:
 
                     kml.write ('    <Placemark>\n')
 
@@ -934,7 +934,7 @@ def GDX_Publisher(self):
                     kml.write ('    </Placemark>\n')
 
 
-                elif geom.type() == QGis.Polygon:
+                elif geom.type() == QgsWkbTypes.PolygonGeometry:
 
                     kml.write ('    <Placemark>\n')
 
@@ -1226,7 +1226,7 @@ def GDX_Publisher2(self, kml):
                 nele = feat.id()
                 geom = feat.geometry()
 
-                if geom.type() == QGis.Point:
+                if geom.type() == QgsWkbTypes.PointGeometry:
                     elem = geom.asPoint()
                     x1 = elem.x()
                     y1 = elem.y()
@@ -1261,7 +1261,7 @@ def GDX_Publisher2(self, kml):
                     kml = kml +  ('         </Point>\n')
                     kml = kml +  (' </Placemark>\n')
 
-                elif geom.type() == QGis.Line:
+                elif geom.type() == QgsWkbTypes.LineGeometry:
 
                     kml = kml +  (' <Placemark>\n')
                     stringazza =   ('               <name>%s</name>\n') % (nele)
@@ -1298,7 +1298,7 @@ def GDX_Publisher2(self, kml):
                     kml = kml +  (' </Placemark>\n')
 
 
-                elif geom.type() == QGis.Polygon:
+                elif geom.type() == QgsWkbTypes.PolygonGeometry:
 
                     kml = kml +  (' <Placemark>\n')
                     stringazza =   ('               <name>%s</name>\n') % (nele)
