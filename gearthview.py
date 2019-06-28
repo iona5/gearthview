@@ -320,7 +320,7 @@ def startGeoDrink_Server(self):
 
 
                 canvas = self.iface.mapCanvas()
-                mapRenderer = canvas.mapRenderer()
+                mapRenderer = canvas.mapSettings()
                 srs = mapRenderer.destinationCrs()
 
                 crsSrc = QgsCoordinateReferenceSystem(4326)
@@ -402,7 +402,7 @@ def startGeoDrink_Server(self):
                 Zeta = float(LookatTerrain[2])
 
                 canvas = self.iface.mapCanvas()
-                mapRenderer = canvas.mapRenderer()
+                mapRenderer = canvas.mapSettings()
                 srs = mapRenderer.destinationCrs()
 
                 crsSrc = QgsCoordinateReferenceSystem(4326)
@@ -546,10 +546,11 @@ def GDX_Publisher(self):
     out_folder = webserverDir
     kml = codecs.open(out_folder + '/doc.kml', 'w', encoding='utf-8')#
 
-    mapRenderer = mapCanvas.mapRenderer()
+    mapRenderer = mapCanvas.mapSettings()
     mapRect = mapRenderer.extent()
-    width = mapRenderer.width()
-    height = mapRenderer.height()
+    
+    width = mapRenderer.outputSize().width()
+    height = mapRenderer.outputSize().height()
     srs = mapRenderer.destinationCrs()
 
     xN = mapRect.xMinimum()
@@ -836,7 +837,7 @@ def GDX_Publisher(self):
             xMax = float(boundBox.xMaximum())
             yMax = float(boundBox.yMaximum())
 
-            crs2 = mapCanvas.mapRenderer().destinationCrs()
+            crs2 = mapCanvas.mapSettings().destinationCrs()
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
             xform2   = QgsCoordinateTransform(crs2, crsDest2)
 
@@ -1053,7 +1054,7 @@ def GDX_Publisher2(self, kml):
 # ------------------------------------------------------------------
 
 
-    mapRenderer = mapCanvas.mapRenderer()
+    mapRenderer = mapCanvas.mapSettings()
     mapRect = mapRenderer.extent()
     width = mapRenderer.width()
     height = mapRenderer.height()
@@ -1214,7 +1215,7 @@ def GDX_Publisher2(self, kml):
             yMax = float(boundBox.yMaximum())
 
 
-            crs2 = mapCanvas.mapRenderer().destinationCrs()
+            crs2 = mapCanvas.mapSettings().destinationCrs()
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
             xform2   = QgsCoordinateTransform(crs2, crsDest2)
 
