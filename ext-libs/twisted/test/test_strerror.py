@@ -21,7 +21,7 @@ class _MyWindowsException(OSError):
 
 
 
-class ErrorFormatingTestCase(TestCase):
+class ErrorFormatingTests(TestCase):
     """
     Tests for C{_ErrorFormatter.formatError}.
     """
@@ -129,7 +129,7 @@ class ErrorFormatingTestCase(TestCase):
 
     def test_correctLookups(self):
         """
-        Given an known-good errno, make sure that formatMessage gives results
+        Given a known-good errno, make sure that formatMessage gives results
         matching either C{socket.errorTab}, C{ctypes.WinError}, or
         C{win32api.FormatMessage}.
         """

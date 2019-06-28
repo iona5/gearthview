@@ -7,21 +7,17 @@ Tests for L{twisted.internet.posixbase} and supporting code.
 
 from __future__ import division, absolute_import
 
-from twisted.python.compat import _PY3
 from twisted.trial.unittest import TestCase
 from twisted.internet.defer import Deferred
 from twisted.internet.posixbase import PosixReactorBase, _Waker
 from twisted.internet.protocol import ServerFactory
 
 skipSockets = None
-if _PY3:
-    skipSockets = "Re-enable when Python 3 port supports AF_UNIX"
-else:
-    try:
-        from twisted.internet import unix
-        from twisted.test.test_unix import ClientProto
-    except ImportError:
-        skipSockets = "Platform does not support AF_UNIX sockets"
+try:
+    from twisted.internet import unix
+    from twisted.test.test_unix import ClientProto
+except ImportError:
+    skipSockets = "Platform does not support AF_UNIX sockets"
 
 from twisted.internet.tcp import Port
 from twisted.internet import reactor
@@ -187,11 +183,11 @@ class IterationTimeoutTests(TestCase):
     def test_noCalls(self):
         """
         If there are no delayed calls, C{doIteration} is called with a
-        timeout of C{None}.
+        timeout of L{None}.
         """
         reactor = TimeoutReportReactor()
         timeout = self._checkIterationTimeout(reactor)
-        self.assertEqual(timeout, None)
+        self.assertIsNone(timeout)
 
 
     def test_delayedCall(self):
@@ -264,18 +260,18 @@ class IterationTimeoutTests(TestCase):
 
     def test_cancelDelayedCall(self):
         """
-        If the only delayed call is canceled, C{None} is the timeout passed
+        If the only delayed call is canceled, L{None} is the timeout passed
         to C{doIteration}.
         """
         reactor = TimeoutReportReactor()
         call = reactor.callLater(50, lambda: None)
         call.cancel()
         timeout = self._checkIterationTimeout(reactor)
-        self.assertEqual(timeout, None)
+        self.assertIsNone(timeout)
 
 
 
-class ConnectedDatagramPortTestCase(TestCase):
+class ConnectedDatagramPortTests(TestCase):
     """
     Test connected datagram UNIX sockets.
     """
@@ -317,4 +313,4 @@ class ConnectedDatagramPortTestCase(TestCase):
         port = unix.ConnectedDatagramPort(None, ClientProto())
         port.stopListening = stopListening
         port.connectionFailed("goodbye")
-        self.assertEqual(self.called, True)
+        self.assertTrue(self.called)

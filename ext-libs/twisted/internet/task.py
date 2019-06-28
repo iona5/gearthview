@@ -12,12 +12,15 @@ __metaclass__ = type
 
 import sys
 import time
+import warnings
 
 from zope.interface import implementer
 
 from twisted.python import log
-from twisted.python import _reflectpy3 as reflect
+from twisted.python import reflect
+from twisted.python.deprecate import _getDeprecationWarningString
 from twisted.python.failure import Failure
+from incremental import Version
 
 from twisted.internet import base, defer
 from twisted.internet.interfaces import IReactorTime
@@ -46,10 +49,6 @@ class LoopingCall:
         exception. In either case, it will be C{False} by the time the
         C{Deferred} returned by L{start} fires its callback or errback.
 
-    @type _expectNextCallAt: C{float}
-    @ivar _expectNextCallAt: The time at which this instance most recently
-        scheduled itself to run.
-
     @type _realLastTime: C{float}
     @ivar _realLastTime: When counting skips, the time at which the skip
         counter was last invoked.
@@ -61,9 +60,8 @@ class LoopingCall:
 
     call = None
     running = False
-    deferred = None
+    _deferred = None
     interval = None
-    _expectNextCallAt = 0.0
     _runAtStart = False
     starttime = None
 
@@ -74,6 +72,20 @@ class LoopingCall:
         from twisted.internet import reactor
         self.clock = reactor
 
+    @property
+    def deferred(self):
+        """
+        DEPRECATED. L{Deferred} fired when loop stops or fails.
+
+        Use the L{Deferred} returned by L{LoopingCall.start}.
+        """
+        warningString = _getDeprecationWarningString(
+            "twisted.internet.task.LoopingCall.deferred",
+            Version("Twisted", 16, 0, 0),
+            replacement='the deferred returned by start()')
+        warnings.warn(warningString, DeprecationWarning, stacklevel=2)
+
+        return self._deferred
 
     def withCount(cls, countCallable):
         """
@@ -91,6 +103,8 @@ class LoopingCall:
         elapsed, or if the callable itself blocks for longer than an interval,
         preventing I{itself} from being called.
 
+        When running with an interval if 0, count will be always 1.
+
         @param countCallable: A callable that will be invoked each time the
             resulting LoopingCall is run, with an integer specifying the number
             of calls that should have been invoked.
@@ -107,16 +121,22 @@ class LoopingCall:
 
         def counter():
             now = self.clock.seconds()
+
+            if self.interval == 0:
+                self._realLastTime = now
+                return countCallable(1)
+
             lastTime = self._realLastTime
             if lastTime is None:
                 lastTime = self.starttime
                 if self._runAtStart:
                     lastTime -= self.interval
-            self._realLastTime = now
             lastInterval = self._intervalOf(lastTime)
             thisInterval = self._intervalOf(now)
             count = thisInterval - lastInterval
-            return countCallable(count)
+            if count > 0:
+                self._realLastTime = now
+                return countCallable(count)
 
         self = cls(counter)
 
@@ -164,16 +184,17 @@ class LoopingCall:
         if interval < 0:
             raise ValueError("interval must be >= 0")
         self.running = True
-        d = self.deferred = defer.Deferred()
+        # Loop might fail to start and then self._deferred will be cleared.
+        # This why the local C{deferred} variable is used.
+        deferred = self._deferred = defer.Deferred()
         self.starttime = self.clock.seconds()
-        self._expectNextCallAt = self.starttime
         self.interval = interval
         self._runAtStart = now
         if now:
             self()
         else:
-            self._reschedule()
-        return d
+            self._scheduleFrom(self.starttime)
+        return deferred
 
     def stop(self):
         """Stop running function.
@@ -184,7 +205,7 @@ class LoopingCall:
         if self.call is not None:
             self.call.cancel()
             self.call = None
-            d, self.deferred = self.deferred, None
+            d, self._deferred = self._deferred, None
             d.callback(self)
 
     def reset(self):
@@ -198,20 +219,20 @@ class LoopingCall:
         if self.call is not None:
             self.call.cancel()
             self.call = None
-            self._expectNextCallAt = self.clock.seconds()
-            self._reschedule()
+            self.starttime = self.clock.seconds()
+            self._scheduleFrom(self.starttime)
 
     def __call__(self):
         def cb(result):
             if self.running:
-                self._reschedule()
+                self._scheduleFrom(self.clock.seconds())
             else:
-                d, self.deferred = self.deferred, None
+                d, self._deferred = self._deferred, None
                 d.callback(self)
 
         def eb(failure):
             self.running = False
-            d, self.deferred = self.deferred, None
+            d, self._deferred = self._deferred, None
             d.errback(failure)
 
         self.call = None
@@ -220,27 +241,39 @@ class LoopingCall:
         d.addErrback(eb)
 
 
-    def _reschedule(self):
+    def _scheduleFrom(self, when):
         """
         Schedule the next iteration of this looping call.
-        """
-        if self.interval == 0:
-            self.call = self.clock.callLater(0, self)
-            return
 
-        currentTime = self.clock.seconds()
-        # Find how long is left until the interval comes around again.
-        untilNextTime = (self._expectNextCallAt - currentTime) % self.interval
-        # Make sure it is in the future, in case more than one interval worth
-        # of time passed since the previous call was made.
-        nextTime = max(
-            self._expectNextCallAt + self.interval, currentTime + untilNextTime)
-        # If the interval falls on the current time exactly, skip it and
-        # schedule the call for the next interval.
-        if nextTime == currentTime:
-            nextTime += self.interval
-        self._expectNextCallAt = nextTime
-        self.call = self.clock.callLater(nextTime - currentTime, self)
+        @param when: The present time from whence the call is scheduled.
+        """
+        def howLong():
+            # How long should it take until the next invocation of our
+            # callable?  Split out into a function because there are multiple
+            # places we want to 'return' out of this.
+            if self.interval == 0:
+                # If the interval is 0, just go as fast as possible, always
+                # return zero, call ourselves ASAP.
+                return 0
+            # Compute the time until the next interval; how long has this call
+            # been running for?
+            runningFor = when - self.starttime
+            # And based on that start time, when does the current interval end?
+            untilNextInterval = self.interval - (runningFor % self.interval)
+            # Now that we know how long it would be, we have to tell if the
+            # number is effectively zero.  However, we can't just test against
+            # zero.  If a number with a small exponent is added to a number
+            # with a large exponent, it may be so small that the digits just
+            # fall off the end, which means that adding the increment makes no
+            # difference; it's time to tick over into the next interval.
+            if when == when + untilNextInterval:
+                # If it's effectively zero, then we need to add another
+                # interval.
+                return self.interval
+            # Finally, if everything else is normal, we just return the
+            # computed delay.
+            return untilNextInterval
+        self.call = self.clock.callLater(howLong(), self)
 
 
     def __repr__(self):
@@ -359,7 +392,7 @@ class CooperativeTask(object):
     @type _pauseCount: C{int}
 
     @ivar _completionState: The completion-state of this L{CooperativeTask}.
-        C{None} if the task is not yet completed, an instance of L{TaskStopped}
+        L{None} if the task is not yet completed, an instance of L{TaskStopped}
         if C{stop} was called to stop this task early, of L{TaskFailed} if the
         application code in the iterator raised an exception which caused it to
         terminate, and of L{TaskDone} if it terminated normally via raising
@@ -499,6 +532,34 @@ class CooperativeTask(object):
 class Cooperator(object):
     """
     Cooperative task scheduler.
+
+    A cooperative task is an iterator where each iteration represents an
+    atomic unit of work.  When the iterator yields, it allows the
+    L{Cooperator} to decide which of its tasks to execute next.  If the
+    iterator yields a L{defer.Deferred} then work will pause until the
+    L{defer.Deferred} fires and completes its callback chain.
+
+    When a L{Cooperator} has more than one task, it distributes work between
+    all tasks.
+
+    There are two ways to add tasks to a L{Cooperator}, L{cooperate} and
+    L{coiterate}.  L{cooperate} is the more useful of the two, as it returns a
+    L{CooperativeTask}, which can be L{paused<CooperativeTask.pause>},
+    L{resumed<CooperativeTask.resume>} and L{waited
+    on<CooperativeTask.whenDone>}.  L{coiterate} has the same effect, but
+    returns only a L{defer.Deferred} that fires when the task is done.
+
+    L{Cooperator} can be used for many things, including but not limited to:
+
+      - running one or more computationally intensive tasks without blocking
+      - limiting parallelism by running a subset of the total tasks
+        simultaneously
+      - doing one thing, waiting for a L{Deferred<defer.Deferred>} to fire,
+        doing the next thing, repeat (i.e. serializing a sequence of
+        asynchronous tasks)
+
+    Multiple L{Cooperator}s do not cooperate with each other, so for most
+    cases you should use the L{global cooperator<task.cooperate>}.
     """
 
     def __init__(self,
@@ -535,6 +596,9 @@ class Cooperator(object):
         """
         Add an iterator to the list of iterators this L{Cooperator} is
         currently running.
+
+        Equivalent to L{cooperate}, but returns a L{defer.Deferred} that will
+        be fired when the task is done.
 
         @param doneDeferred: If specified, this will be the Deferred used as
             the completion deferred.  It is suggested that you use the default,
@@ -676,6 +740,12 @@ def cooperate(iterator):
     Start running the given iterator as a long-running cooperative task, by
     calling next() on it as a periodic timed event.
 
+    This is very useful if you have computationally expensive tasks that you
+    want to run without blocking the reactor.  Just break each task up so that
+    it yields frequently, pass it in here and the global L{Cooperator} will
+    make sure work is distributed between them without blocking longer than a
+    single iteration of a single task.
+
     @param iterator: the iterator to invoke.
 
     @return: a L{CooperativeTask} object representing this task.
@@ -701,7 +771,7 @@ class Clock:
     def seconds(self):
         """
         Pretend to be time.time().  This is used internally when an operation
-        such as L{IDelayedCall.reset} needs to determine a a time value
+        such as L{IDelayedCall.reset} needs to determine a time value
         relative to the current time.
 
         @rtype: C{float}
@@ -798,7 +868,7 @@ def deferLater(clock, delay, callable, *args, **kw):
 
 
 
-def react(main, argv, _reactor=None):
+def react(main, argv=(), _reactor=None):
     """
     Call C{main} and run the reactor until the L{Deferred} it returns fires.
 
@@ -814,10 +884,19 @@ def react(main, argv, _reactor=None):
         1 in case of failure. If C{main} fails with a C{SystemExit} error, the
         code returned is used.
 
-    @param main: A callable which returns a L{Deferred}.  It should take as
-        many arguments as there are elements in the list C{argv}.
+    The following demonstrates the signature of a C{main} function which can be
+    used with L{react}::
+          def main(reactor, username, password):
+              return defer.succeed('ok')
 
-    @param argv: A list of arguments to pass to C{main}.
+          task.react(main, ('alice', 'secret'))
+
+    @param main: A callable which returns a L{Deferred}. It should
+        take the reactor as its first parameter, followed by the elements of
+        C{argv}.
+
+    @param argv: A list of arguments to pass to C{main}. If omitted the
+        callable will be invoked with no additional arguments.
 
     @param _reactor: An implementation detail to allow easier unit testing.  Do
         not supply this parameter.

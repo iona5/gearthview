@@ -41,7 +41,7 @@ class ObjectModelIntegrationMixin(object):
 
 
 
-class ObjectModelIntegrationTest(ReactorBuilder, ObjectModelIntegrationMixin):
+class ObjectModelIntegrationTests(ReactorBuilder, ObjectModelIntegrationMixin):
     """
     Test details of object model integration against all reactors.
     """
@@ -141,7 +141,7 @@ class SystemEventTestsBuilder(ReactorBuilder):
             sawPhase.append(phase[0])
         self.patch(signal, 'signal', fakeSignal)
         reactor.callWhenRunning(reactor.stop)
-        self.assertEqual(phase[0], None)
+        self.assertIsNone(phase[0])
         self.assertEqual(sawPhase, [])
         self.runReactor(reactor)
         self.assertIn("before", sawPhase)
@@ -270,7 +270,7 @@ class SystemEventTestsBuilder(ReactorBuilder):
         reactor.iterate(0) # Shouldn't block
         elapsed = time.time() - start
 
-        self.failUnless(elapsed < 2)
+        self.assertTrue(elapsed < 2)
         t.cancel()
 
 
@@ -330,4 +330,4 @@ class SystemEventTestsBuilder(ReactorBuilder):
 
 
 globals().update(SystemEventTestsBuilder.makeTestCaseClasses())
-globals().update(ObjectModelIntegrationTest.makeTestCaseClasses())
+globals().update(ObjectModelIntegrationTests.makeTestCaseClasses())

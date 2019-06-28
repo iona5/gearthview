@@ -7,15 +7,9 @@ from __future__ import division, absolute_import
 import os
 import sys
 import time
-import imp
 import warnings
 
-from twisted.python import compat
-
-if compat._PY3:
-    _threadModule = "_thread"
-else:
-    _threadModule = "thread"
+from twisted.python._oldstyle import _oldStyle
 
 
 
@@ -44,6 +38,7 @@ _timeFunctions = {
 
 
 
+@_oldStyle
 class Platform:
     """
     Gives us information about the platform we're running on.
@@ -83,9 +78,9 @@ class Platform:
 
     def isMacOSX(self):
         """
-        Check if current platform is Mac OS X.
+        Check if current platform is macOS.
 
-        @return: C{True} if the current platform has been detected as OS X.
+        @return: C{True} if the current platform has been detected as macOS.
         @rtype: C{bool}
         """
         return self._platform == "darwin"
@@ -143,6 +138,62 @@ class Platform:
         return self._platform.startswith("linux")
 
 
+    def isDocker(self, _initCGroupLocation="/proc/1/cgroup"):
+        """
+        Check if the current platform is Linux in a Docker container.
+
+        @return: C{True} if the current platform has been detected as Linux
+            inside a Docker container.
+        @rtype: C{bool}
+        """
+        if not self.isLinux():
+            return False
+
+        from twisted.python.filepath import FilePath
+
+        # Ask for the cgroups of init (pid 1)
+        initCGroups = FilePath(_initCGroupLocation)
+        if initCGroups.exists():
+            # The cgroups file looks like "2:cpu:/". The third element will
+            # begin with /docker if it is inside a Docker container.
+            controlGroups = [x.split(b":")
+                             for x in initCGroups.getContent().split(b"\n")]
+
+            for group in controlGroups:
+                if len(group) == 3 and group[2].startswith(b"/docker/"):
+                    # If it starts with /docker/, we're in a docker container
+                    return True
+
+        return False
+
+
+    def _supportsSymlinks(self):
+        """
+        Check for symlink support usable for Twisted's purposes.
+
+        @return: C{True} if symlinks are supported on the current platform,
+                 otherwise C{False}.
+        @rtype: L{bool}
+        """
+        if self.isWindows():
+            # We do the isWindows() check as newer Pythons support the symlink
+            # support in Vista+, but only if you have some obscure permission
+            # (SeCreateSymbolicLinkPrivilege), which can only be given on
+            # platforms with msc.exe (so, Business/Enterprise editions).
+            # This uncommon requirement makes the Twisted test suite test fail
+            # in 99.99% of cases as general users don't have permission to do
+            # it, even if there is "symlink support".
+            return False
+        else:
+            # If we're not on Windows, check for existence of os.symlink.
+            try:
+                os.symlink
+            except AttributeError:
+                return False
+            else:
+                return True
+
+
     def supportsThreads(self):
         """
         Can threads be created?
@@ -151,7 +202,8 @@ class Platform:
         @rtype: C{bool}
         """
         try:
-            return imp.find_module(_threadModule)[0] is None
+            import threading
+            return threading is not None # shh pyflakes
         except ImportError:
             return False
 
@@ -166,6 +218,7 @@ class Platform:
             from twisted.python._inotify import INotifyError, init
         except ImportError:
             return False
+
         try:
             os.close(init())
         except INotifyError:

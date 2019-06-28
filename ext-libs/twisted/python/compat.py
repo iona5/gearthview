@@ -16,11 +16,24 @@ the latest version of Python directly from your code, if possible.
 
 @var NativeStringIO: An in-memory file-like object that operates on the native
     string type (bytes in Python 2, unicode in Python 3).
+
+@var urllib_parse: a URL-parsing module (urlparse on Python 2, urllib.parse on
+    Python 3)
 """
 
-from __future__ import division
+from __future__ import absolute_import, division
 
-import sys, string, socket, struct
+import inspect
+import os
+import platform
+import socket
+import struct
+import sys
+import tokenize
+from types import MethodType as _MethodType
+import warnings
+
+from io import TextIOBase, IOBase
 
 
 if sys.version_info < (3, 0):
@@ -28,15 +41,84 @@ if sys.version_info < (3, 0):
 else:
     _PY3 = True
 
+if sys.version_info >= (3, 5, 0):
+    _PY35PLUS = True
+else:
+    _PY35PLUS = False
+
+if sys.version_info >= (3, 7, 0):
+    _PY37PLUS = True
+else:
+    _PY37PLUS = False
+
+if platform.python_implementation() == 'PyPy':
+    _PYPY = True
+else:
+    _PYPY = False
+
+
+
+def _shouldEnableNewStyle():
+    """
+    Returns whether or not we should enable the new-style conversion of
+    old-style classes. It inspects the environment for C{TWISTED_NEWSTYLE},
+    accepting an empty string, C{no}, C{false}, C{False}, and C{0} as falsey
+    values and everything else as a truthy value.
+
+    @rtype: L{bool}
+    """
+    value = os.environ.get('TWISTED_NEWSTYLE', '')
+
+    if value in ['', 'no', 'false', 'False', '0']:
+        return False
+    else:
+        return True
+
+
+_EXPECT_NEWSTYLE = _PY3 or _shouldEnableNewStyle()
+
+
+def currentframe(n=0):
+    """
+    In Python 3, L{inspect.currentframe} does not take a stack-level argument.
+    Restore that functionality from Python 2 so we don't have to re-implement
+    the C{f_back}-walking loop in places where it's called.
+
+    @param n: The number of stack levels above the caller to walk.
+    @type n: L{int}
+
+    @return: a frame, n levels up the stack from the caller.
+    @rtype: L{types.FrameType}
+    """
+    f = inspect.currentframe()
+    for x in range(n + 1):
+        f = f.f_back
+    return f
+
 
 
 def inet_pton(af, addr):
+    """
+    Emulator of L{socket.inet_pton}.
+
+    @param af: An address family to parse; C{socket.AF_INET} or
+        C{socket.AF_INET6}.
+    @type af: L{int}
+
+    @param addr: An address.
+    @type addr: native L{str}
+
+    @return: The binary packed version of the passed address.
+    @rtype: L{bytes}
+    """
+    if not addr:
+        raise ValueError("illegal IP address string passed to inet_pton")
     if af == socket.AF_INET:
         return socket.inet_aton(addr)
     elif af == getattr(socket, 'AF_INET6', 'AF_INET6'):
-        if [x for x in addr if x not in string.hexdigits + ':.']:
-            raise ValueError("Illegal characters: %r" % (''.join(x),))
-
+        if '%' in addr and (addr.count('%') > 1 or addr.index("%") == 0):
+            raise ValueError("illegal IP address string passed to inet_pton")
+        addr = addr.split('%')[0]
         parts = addr.split(':')
         elided = parts.count('')
         ipv4Component = '.' in parts[-1]
@@ -76,6 +158,8 @@ def inet_pton(af, addr):
     else:
         raise socket.error(97, 'Address family not supported by protocol')
 
+
+
 def inet_ntop(af, addr):
     if af == socket.AF_INET:
         return socket.inet_ntoa(addr)
@@ -92,6 +176,7 @@ def inet_ntop(af, addr):
                 curLen += 1
             else:
                 if curBase is not None:
+                    bestLen = None
                     if bestBase is None or curLen > bestLen:
                         bestBase = curBase
                         bestLen = curLen
@@ -132,17 +217,8 @@ if _PY3:
     del adict, inet_pton, inet_ntop
 
 
-
-try:
-    set = set
-except NameError:
-    from sets import Set as set
-
-
-try:
-    frozenset = frozenset
-except NameError:
-    from sets import ImmutableSet as frozenset
+set = set
+frozenset = frozenset
 
 
 try:
@@ -165,11 +241,8 @@ def execfile(filename, globals, locals=None):
     """
     if locals is None:
         locals = globals
-    fin = open(filename, "rbU")
-    try:
+    with open(filename, "rb") as fin:
         source = fin.read()
-    finally:
-        fin.close()
     code = compile(source, filename, "exec")
     exec(code, globals, locals)
 
@@ -205,6 +278,7 @@ def comparable(klass):
     # On Python 2, __cmp__ will just work, so no need to add extra methods:
     if not _PY3:
         return klass
+
 
     def __eq__(self, other):
         c = self.__cmp__(other)
@@ -259,8 +333,71 @@ def comparable(klass):
 
 if _PY3:
     unicode = str
+    long = int
 else:
     unicode = unicode
+    long = long
+
+
+
+def ioType(fileIshObject, default=unicode):
+    """
+    Determine the type which will be returned from the given file object's
+    read() and accepted by its write() method as an argument.
+
+    In other words, determine whether the given file is 'opened in text mode'.
+
+    @param fileIshObject: Any object, but ideally one which resembles a file.
+    @type fileIshObject: L{object}
+
+    @param default: A default value to return when the type of C{fileIshObject}
+        cannot be determined.
+    @type default: L{type}
+
+    @return: There are 3 possible return values:
+
+            1. L{unicode}, if the file is unambiguously opened in text mode.
+
+            2. L{bytes}, if the file is unambiguously opened in binary mode.
+
+            3. L{basestring}, if we are on python 2 (the L{basestring} type
+               does not exist on python 3) and the file is opened in binary
+               mode, but has an encoding and can therefore accept both bytes
+               and text reliably for writing, but will return L{bytes} from
+               read methods.
+
+            4. The C{default} parameter, if the given type is not understood.
+
+    @rtype: L{type}
+    """
+    if isinstance(fileIshObject, TextIOBase):
+        # If it's for text I/O, then it's for text I/O.
+        return unicode
+    if isinstance(fileIshObject, IOBase):
+        # If it's for I/O but it's _not_ for text I/O, it's for bytes I/O.
+        return bytes
+    encoding = getattr(fileIshObject, 'encoding', None)
+    import codecs
+    if isinstance(fileIshObject, (codecs.StreamReader, codecs.StreamWriter)):
+        # On StreamReaderWriter, the 'encoding' attribute has special meaning;
+        # it is unambiguously unicode.
+        if encoding:
+            return unicode
+        else:
+            return bytes
+    if not _PY3:
+        # Special case: if we have an encoding file, we can *give* it unicode,
+        # but we can't expect to *get* unicode.
+        if isinstance(fileIshObject, file):
+            if encoding is not None:
+                return basestring
+            else:
+                return bytes
+        from cStringIO import InputType, OutputType
+        from StringIO import StringIO
+        if isinstance(fileIshObject, (StringIO, InputType, OutputType)):
+            return bytes
+    return default
 
 
 
@@ -290,6 +427,38 @@ def nativeString(s):
 
 
 
+def _matchingString(constantString, inputString):
+    """
+    Some functions, such as C{os.path.join}, operate on string arguments which
+    may be bytes or text, and wish to return a value of the same type.  In
+    those cases you may wish to have a string constant (in the case of
+    C{os.path.join}, that constant would be C{os.path.sep}) involved in the
+    parsing or processing, that must be of a matching type in order to use
+    string operations on it.  L{_matchingString} will take a constant string
+    (either L{bytes} or L{unicode}) and convert it to the same type as the
+    input string.  C{constantString} should contain only characters from ASCII;
+    to ensure this, it will be encoded or decoded regardless.
+
+    @param constantString: A string literal used in processing.
+    @type constantString: L{unicode} or L{bytes}
+
+    @param inputString: A byte string or text string provided by the user.
+    @type inputString: L{unicode} or L{bytes}
+
+    @return: C{constantString} converted into the same type as C{inputString}
+    @rtype: the type of C{inputString}
+    """
+    if isinstance(constantString, bytes):
+        otherType = constantString.decode("ascii")
+    else:
+        otherType = constantString.encode("ascii")
+    if type(constantString) == type(inputString):
+        return constantString
+    else:
+        return otherType
+
+
+
 if _PY3:
     def reraise(exception, traceback):
         raise exception.with_traceback(traceback)
@@ -305,7 +474,7 @@ Note that on Python 3, re-raised exceptions will be mutated, with their
 C{__traceback__} attribute being set.
 
 @param exception: The exception instance.
-@param traceback: The traceback to use, or C{None} indicating a new traceback.
+@param traceback: The traceback to use, or L{None} indicating a new traceback.
 """
 
 
@@ -329,10 +498,6 @@ if _PY3:
         return ("%d" % i).encode("ascii")
 
 
-    # Ideally we would use memoryview, but it has a number of differences from
-    # the Python 2 buffer() that make that impractical
-    # (http://bugs.python.org/issue15945, incompatiblity with pyOpenSSL due to
-    # PyArg_ParseTuple differences.)
     def lazyByteSlice(object, offset=0, size=None):
         """
         Return a copy of the given bytes-like object.
@@ -347,10 +512,11 @@ if _PY3:
         @param size: Optional, if an C{int} is given limit the length of copy
             to this size.
         """
+        view = memoryview(object)
         if size is None:
-            return object[offset:]
+            return view[offset:]
         else:
-            return object[offset:(offset + size)]
+            return view[offset:(offset + size)]
 
 
     def networkString(s):
@@ -364,7 +530,6 @@ else:
 
     def intToBytes(i):
         return b"%d" % i
-
 
     lazyByteSlice = buffer
 
@@ -414,6 +579,290 @@ interpolation.  For example, this is safe on Python 2 and Python 3:
 """
 
 
+try:
+    StringType = basestring
+except NameError:
+    # Python 3+
+    StringType = str
+
+try:
+    from types import InstanceType
+except ImportError:
+    # Python 3+
+    InstanceType = object
+
+try:
+    from types import FileType
+except ImportError:
+    # Python 3+
+    FileType = IOBase
+
+if _PY3:
+    import urllib.parse as urllib_parse
+    from html import escape
+    from urllib.parse import quote as urlquote
+    from urllib.parse import unquote as urlunquote
+    from http import cookiejar as cookielib
+else:
+    import urlparse as urllib_parse
+    from cgi import escape
+    from urllib import quote as urlquote
+    from urllib import unquote as urlunquote
+    import cookielib
+
+
+# Dealing with the differences in items/iteritems
+if _PY3:
+    def iteritems(d):
+        return d.items()
+
+
+    def itervalues(d):
+        return d.values()
+
+
+    def items(d):
+        return list(d.items())
+
+    range = range
+    xrange = range
+    izip = zip
+else:
+    def iteritems(d):
+        return d.iteritems()
+
+
+    def itervalues(d):
+        return d.itervalues()
+
+
+    def items(d):
+        return d.items()
+
+    range = xrange
+    xrange = xrange
+    from itertools import izip
+    izip # shh pyflakes
+
+
+iteritems.__doc__ = """
+Return an iterable of the items of C{d}.
+
+@type d: L{dict}
+@rtype: iterable
+"""
+
+itervalues.__doc__ = """
+Return an iterable of the values of C{d}.
+
+@type d: L{dict}
+@rtype: iterable
+"""
+
+items.__doc__ = """
+Return a list of the items of C{d}.
+
+@type d: L{dict}
+@rtype: L{list}
+"""
+
+def _keys(d):
+    """
+    Return a list of the keys of C{d}.
+
+    @type d: L{dict}
+    @rtype: L{list}
+    """
+    if _PY3:
+        return list(d.keys())
+    else:
+        return d.keys()
+
+
+
+def bytesEnviron():
+    """
+    Return a L{dict} of L{os.environ} where all text-strings are encoded into
+    L{bytes}.
+
+    This function is POSIX only; environment variables are always text strings
+    on Windows.
+    """
+    if not _PY3:
+        # On py2, nothing to do.
+        return dict(os.environ)
+
+    target = dict()
+    for x, y in os.environ.items():
+        target[os.environ.encodekey(x)] = os.environ.encodevalue(y)
+
+    return target
+
+
+
+def _constructMethod(cls, name, self):
+    """
+    Construct a bound method.
+
+    @param cls: The class that the method should be bound to.
+    @type cls: L{types.ClassType} or L{type}.
+
+    @param name: The name of the method.
+    @type name: native L{str}
+
+    @param self: The object that the method is bound to.
+    @type self: any object
+
+    @return: a bound method
+    @rtype: L{types.MethodType}
+    """
+    func = cls.__dict__[name]
+    if _PY3:
+        return _MethodType(func, self)
+    return _MethodType(func, self, cls)
+
+
+
+from incremental import Version
+from twisted.python.deprecate import deprecatedModuleAttribute
+
+from collections import OrderedDict
+
+deprecatedModuleAttribute(
+    Version("Twisted", 15, 5, 0),
+    "Use collections.OrderedDict instead.",
+    "twisted.python.compat",
+    "OrderedDict")
+
+if _PY3:
+    from base64 import encodebytes as _b64encodebytes
+    from base64 import decodebytes as _b64decodebytes
+else:
+    from base64 import encodestring as _b64encodebytes
+    from base64 import decodestring as _b64decodebytes
+
+
+
+def _bytesChr(i):
+    """
+    Like L{chr} but always works on ASCII, returning L{bytes}.
+
+    @param i: The ASCII code point to return.
+    @type i: L{int}
+
+    @rtype: L{bytes}
+    """
+    if _PY3:
+        return bytes([i])
+    else:
+        return chr(i)
+
+
+
+try:
+    from sys import intern
+except ImportError:
+    intern = intern
+
+
+
+def _coercedUnicode(s):
+    """
+    Coerce ASCII-only byte strings into unicode for Python 2.
+
+    In Python 2 C{unicode(b'bytes')} returns a unicode string C{'bytes'}. In
+    Python 3, the equivalent C{str(b'bytes')} will return C{"b'bytes'"}
+    instead. This function mimics the behavior for Python 2. It will decode the
+    byte string as ASCII. In Python 3 it simply raises a L{TypeError} when
+    passing a byte string. Unicode strings are returned as-is.
+
+    @param s: The string to coerce.
+    @type s: L{bytes} or L{unicode}
+
+    @raise UnicodeError: The input L{bytes} is not ASCII decodable.
+    @raise TypeError: The input is L{bytes} on Python 3.
+    """
+    if isinstance(s, bytes):
+        if _PY3:
+            raise TypeError("Expected str not %r (bytes)" % (s,))
+        else:
+            return s.decode('ascii')
+    else:
+        return s
+
+
+
+if _PY3:
+    unichr = chr
+    raw_input = input
+else:
+    unichr = unichr
+    raw_input = raw_input
+
+
+
+def _bytesRepr(bytestring):
+    """
+    Provide a repr for a byte string that begins with 'b' on both
+    Python 2 and 3.
+
+    @param bytestring: The string to repr.
+    @type bytestring: L{bytes}
+
+    @raise TypeError: The input is not L{bytes}.
+
+    @return: The repr with a leading 'b'.
+    @rtype: L{bytes}
+    """
+    if not isinstance(bytestring, bytes):
+        raise TypeError("Expected bytes not %r" % (bytestring,))
+
+    if _PY3:
+        return repr(bytestring)
+    else:
+        return 'b' + repr(bytestring)
+
+
+if _PY3:
+    _tokenize = tokenize.tokenize
+else:
+    _tokenize = tokenize.generate_tokens
+
+try:
+    from collections.abc import Sequence
+except ImportError:
+    from collections import Sequence
+
+
+
+def _get_async_param(isAsync=None, **kwargs):
+    """
+    Provide a backwards-compatible way to get async param value that does not
+    cause a syntax error under Python 3.7.
+
+    @param isAsync: isAsync param value (should default to None)
+    @type isAsync: L{bool}
+
+    @param kwargs: keyword arguments of the caller (only async is allowed)
+    @type kwargs: L{dict}
+
+    @raise TypeError: Both isAsync and async specified.
+
+    @return: Final isAsync param value
+    @rtype: L{bool}
+    """
+    if 'async' in kwargs:
+        warnings.warn(
+            "'async' keyword argument is deprecated, please use isAsync",
+            DeprecationWarning, stacklevel=2)
+    if isAsync is None and 'async' in kwargs:
+        isAsync = kwargs.pop('async')
+    if kwargs:
+        raise TypeError
+    return bool(isAsync)
+
+
+
 __all__ = [
     "reraise",
     "execfile",
@@ -422,6 +871,7 @@ __all__ = [
     "set",
     "cmp",
     "comparable",
+    "OrderedDict",
     "nativeString",
     "NativeStringIO",
     "networkString",
@@ -429,4 +879,30 @@ __all__ = [
     "iterbytes",
     "intToBytes",
     "lazyByteSlice",
-    ]
+    "StringType",
+    "InstanceType",
+    "FileType",
+    "items",
+    "iteritems",
+    "itervalues",
+    "range",
+    "xrange",
+    "urllib_parse",
+    "bytesEnviron",
+    "escape",
+    "urlquote",
+    "urlunquote",
+    "cookielib",
+    "_keys",
+    "_b64encodebytes",
+    "_b64decodebytes",
+    "_bytesChr",
+    "_coercedUnicode",
+    "_bytesRepr",
+    "intern",
+    "unichr",
+    "raw_input",
+    "_tokenize",
+    "_get_async_param",
+    "Sequence",
+]

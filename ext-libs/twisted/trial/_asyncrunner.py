@@ -6,8 +6,10 @@
 Infrastructure for test running and suites.
 """
 
+from __future__ import division, absolute_import
+
 import doctest
-import warnings, gc
+import gc
 
 from twisted.python import components
 
@@ -16,52 +18,20 @@ from twisted.trial._synctest import _logObserver
 
 pyunit = __import__('unittest')
 
-from zope.interface import implements
-
-def suiteVisit(suite, visitor):
-    """
-    Visit each test in C{suite} with C{visitor}.
-
-    Deprecated in Twisted 8.0.
-
-    @param visitor: A callable which takes a single argument, the L{TestCase}
-    instance to visit.
-    @return: None
-    """
-    warnings.warn("Test visitors deprecated in Twisted 8.0",
-                  category=DeprecationWarning)
-    for case in suite._tests:
-        visit = getattr(case, 'visit', None)
-        if visit is not None:
-            visit(visitor)
-        elif isinstance(case, pyunit.TestCase):
-            case = itrial.ITestCase(case)
-            case.visit(visitor)
-        elif isinstance(case, pyunit.TestSuite):
-            suiteVisit(case, visitor)
-        else:
-            case.visit(visitor)
+from zope.interface import implementer
 
 
 
 class TestSuite(pyunit.TestSuite):
     """
-    Extend the standard library's C{TestSuite} with support for the visitor
-    pattern and a consistently overrideable C{run} method.
+    Extend the standard library's C{TestSuite} with a consistently overrideable
+    C{run} method.
     """
-
-    visit = suiteVisit
-
-    def __call__(self, result):
-        return self.run(result)
-
 
     def run(self, result):
         """
         Call C{run} on every member of the suite.
         """
-        # we implement this because Python 2.3 unittest defines this code
-        # in __call__, whereas 2.4 defines the code in run.
         for test in self._tests:
             if result.shouldStop:
                 break
@@ -70,6 +40,7 @@ class TestSuite(pyunit.TestSuite):
 
 
 
+@implementer(itrial.ITestCase)
 class TestDecorator(components.proxyForInterface(itrial.ITestCase,
                                                  "_originalTest")):
     """
@@ -78,9 +49,6 @@ class TestDecorator(components.proxyForInterface(itrial.ITestCase,
     @param _originalTest: The wrapped instance of test.
     @type _originalTest: A provider of L{itrial.ITestCase}
     """
-
-    implements(itrial.ITestCase)
-
 
     def __call__(self, result):
         """
@@ -111,6 +79,7 @@ def _clearSuite(suite):
     C{_tests}.
     """
     suite._tests = []
+
 
 
 def decorate(test, decorator):
@@ -149,15 +118,6 @@ class _PyUnitTestCaseAdapter(TestDecorator):
     """
     Adapt from pyunit.TestCase to ITestCase.
     """
-
-
-    def visit(self, visitor):
-        """
-        Deprecated in Twisted 8.0.
-        """
-        warnings.warn("Test visitors deprecated in Twisted 8.0",
-                      category=DeprecationWarning)
-        visitor(self)
 
 
 
@@ -210,6 +170,7 @@ if _docTestCase:
         _BrokenIDTestCaseAdapter, _docTestCase, itrial.ITestCase)
 
 
+
 def _iterateTests(testSuiteOrCase):
     """
     Iterate through all of the test cases in C{testSuiteOrCase}.
@@ -222,14 +183,3 @@ def _iterateTests(testSuiteOrCase):
         for test in suite:
             for subtest in _iterateTests(test):
                 yield subtest
-
-
-
-# Support for Python 2.3
-try:
-    iter(pyunit.TestSuite())
-except TypeError:
-    # Python 2.3's TestSuite doesn't support iteration. Let's monkey patch it!
-    def __iter__(self):
-        return iter(self._tests)
-    pyunit.TestSuite.__iter__ = __iter__

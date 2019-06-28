@@ -5,8 +5,10 @@
 Test cases for twisted.python._shellcomp
 """
 
+from __future__ import division, absolute_import
+
 import sys
-from cStringIO import StringIO
+from io import BytesIO
 
 from twisted.trial import unittest
 from twisted.python import _shellcomp, usage, reflect
@@ -69,20 +71,20 @@ def test_genZshFunction(self, cmdName, optionsFQPN):
     @param optionsFQPN: The Fully Qualified Python Name of the C{Options}
         class to be tested.
     """
-    outputFile = StringIO()
+    outputFile = BytesIO()
     self.patch(usage.Options, '_shellCompFile', outputFile)
 
     # some scripts won't import or instantiate because of missing
-    # dependencies (PyCrypto, etc) so we have to skip them.
+    # dependencies (pyOpenSSL, etc) so we have to skip them.
     try:
         o = reflect.namedAny(optionsFQPN)()
-    except Exception, e:
+    except Exception as e:
         raise unittest.SkipTest("Couldn't import or instantiate "
                                 "Options class: %s" % (e,))
 
     try:
         o.parseOptions(["", "--_shell-completion", "zsh:2"])
-    except ImportError, e:
+    except ImportError as e:
         # this can happen for commands which don't have all
         # the necessary dependencies installed. skip test.
         # skip
@@ -103,7 +105,7 @@ def test_genZshFunction(self, cmdName, optionsFQPN):
             try:
                 o.parseOptions([cmd, "", "--_shell-completion",
                                 "zsh:3"])
-            except ImportError, e:
+            except ImportError as e:
                 # this can happen for commands which don't have all
                 # the necessary dependencies installed. skip test.
                 raise unittest.SkipTest("ImportError calling parseOptions() "
@@ -125,7 +127,7 @@ def test_genZshFunction(self, cmdName, optionsFQPN):
 
 
 
-class ZshTestCase(unittest.TestCase):
+class ZshTests(unittest.TestCase):
     """
     Tests for zsh completion code
     """
@@ -135,7 +137,7 @@ class ZshTestCase(unittest.TestCase):
         picked up correctly?
         """
         opts = FighterAceExtendedOptions()
-        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', 'dummy_value')
+        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', BytesIO())
 
         descriptions = FighterAceOptions.compData.descriptions.copy()
         descriptions.update(FighterAceExtendedOptions.compData.descriptions)
@@ -171,7 +173,7 @@ class ZshTestCase(unittest.TestCase):
                                                 'spad', 'bristol']])
 
         opts = OddFighterAceOptions()
-        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', 'dummy_value')
+        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', BytesIO())
 
         expected = {
              'albatros': set(['anatra', 'b', 'bristol', 'f',
@@ -195,7 +197,7 @@ class ZshTestCase(unittest.TestCase):
         e.g. def opt_foo(self, foo)
         """
         opts = FighterAceExtendedOptions()
-        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', 'dummy_value')
+        ag = _shellcomp.ZshArgumentsGenerator(opts, 'ace', BytesIO())
 
         self.assertIn('nocrash', ag.flagNameToDefinition)
         self.assertIn('nocrash', ag.allOptionsNameToDefinition)
@@ -214,7 +216,7 @@ class ZshTestCase(unittest.TestCase):
             compData = Completions(optActions={'detaill' : None})
 
         self.assertRaises(ValueError, _shellcomp.ZshArgumentsGenerator,
-                          TmpOptions(), 'ace', 'dummy_value')
+                          TmpOptions(), 'ace', BytesIO())
 
         class TmpOptions2(FighterAceExtendedOptions):
             # Note that 'foo' and 'bar' are not real option
@@ -223,7 +225,7 @@ class ZshTestCase(unittest.TestCase):
                            mutuallyExclusive=[("foo", "bar")])
 
         self.assertRaises(ValueError, _shellcomp.ZshArgumentsGenerator,
-                          TmpOptions2(), 'ace', 'dummy_value')
+                          TmpOptions2(), 'ace', BytesIO())
 
 
     def test_zshCode(self):
@@ -231,7 +233,7 @@ class ZshTestCase(unittest.TestCase):
         Generate a completion function, and test the textual output
         against a known correct output
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         self.patch(sys, 'argv', ["silly", "", "--_shell-completion", "zsh:2"])
         opts = SimpleProgOptions()
@@ -244,7 +246,7 @@ class ZshTestCase(unittest.TestCase):
         Generate a completion function with subcommands,
         and test the textual output against a known correct output
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         self.patch(sys, 'argv', ["silly2", "", "--_shell-completion", "zsh:2"])
         opts = SimpleProgWithSubcommands()
@@ -257,7 +259,7 @@ class ZshTestCase(unittest.TestCase):
         Completion still happens even if a command-line is given
         that would normally throw UsageError.
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         opts = FighterAceOptions()
 
@@ -275,10 +277,10 @@ class ZshTestCase(unittest.TestCase):
         Completion still happens even if a command-line is given
         that would normally throw UsageError.
 
-        The existance of --unknown-option prior to the subcommand
+        The existence of --unknown-option prior to the subcommand
         will break subcommand detection... but we complete anyway
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         opts = FighterAceOptions()
 
@@ -301,7 +303,7 @@ class ZshTestCase(unittest.TestCase):
         Break subcommand detection in a different way by providing
         an invalid subcommand name.
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         opts = FighterAceOptions()
 
@@ -318,7 +320,7 @@ class ZshTestCase(unittest.TestCase):
         Ensure the optimization which skips building the subcommand list
         under certain conditions isn't broken.
         """
-        outputFile = StringIO()
+        outputFile = BytesIO()
         self.patch(usage.Options, '_shellCompFile', outputFile)
         opts = FighterAceOptions()
 
@@ -354,7 +356,7 @@ class ZshTestCase(unittest.TestCase):
                               usage.Completer()]
                 )
 
-        outputFile = StringIO()
+        outputFile = BytesIO()
         opts = BrokenActions()
         self.patch(opts, '_shellCompFile', outputFile)
         self.assertRaises(ValueError, opts.parseOptions,
@@ -384,7 +386,7 @@ class ZshTestCase(unittest.TestCase):
 
 
 
-class EscapeTestCase(unittest.TestCase):
+class EscapeTests(unittest.TestCase):
     def test_escape(self):
         """
         Verify _shellcomp.escape() function
@@ -399,7 +401,7 @@ class EscapeTestCase(unittest.TestCase):
 
 
 
-class CompleterNotImplementedTestCase(unittest.TestCase):
+class CompleterNotImplementedTests(unittest.TestCase):
     """
     Test that using an unknown shell constant with SubcommandAction
     raises NotImplementedError
@@ -569,7 +571,7 @@ class SimpleProgWithSubcommands(SimpleProgOptions):
 
 
 
-testOutput1 = """#compdef silly
+testOutput1 = b"""#compdef silly
 
 _arguments -s -A "-*" \\
 ':output file (*):_files -g "*"' \\
@@ -588,7 +590,7 @@ _arguments -s -A "-*" \\
 """
 
 # with sub-commands
-testOutput2 = """#compdef silly2
+testOutput2 = b"""#compdef silly2
 
 _arguments -s -A "-*" \\
 '*::subcmd:->subcmd' \\

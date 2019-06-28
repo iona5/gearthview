@@ -3,13 +3,27 @@
 #
 
 """
-Classes and functions used by L{twisted.trial.test.test_util}.
+Classes and functions used by L{twisted.trial.test.test_util}
+and L{twisted.trial.test.test_loader}.
 """
 
 from __future__ import division, absolute_import
 
-import sys, os
+import sys
+import os
+
+from twisted.python.compat import _PY3
 from twisted.trial import unittest
+
+if _PY3:
+    # Python 3 has some funny import caching, which we don't want.
+    # invalidate_caches clears it out for us.
+    from importlib import invalidate_caches as invalidateImportCaches
+else:
+    def invalidateImportCaches():
+        """
+        On python 2, import caches don't need to be invalidated.
+        """
 
 testModule = """
 from twisted.trial import unittest
@@ -136,9 +150,8 @@ class PackageTest(unittest.SynchronousTestCase):
         for filename, contents in self.files:
             filename = os.path.join(parentDir, filename)
             self._createDirectory(filename)
-            fd = open(filename, 'w')
-            fd.write(contents)
-            fd.close()
+            with open(filename, 'w') as fd:
+                fd.write(contents)
 
 
     def _createDirectory(self, filename):
@@ -148,6 +161,7 @@ class PackageTest(unittest.SynchronousTestCase):
 
 
     def setUp(self, parentDir=None):
+        invalidateImportCaches()
         if parentDir is None:
             parentDir = self.mktemp()
         self.parent = parentDir
@@ -161,6 +175,7 @@ class PackageTest(unittest.SynchronousTestCase):
 
 class SysPathManglingTest(PackageTest):
     def setUp(self, parent=None):
+        invalidateImportCaches()
         self.oldPath = sys.path[:]
         self.newPath = sys.path[:]
         if parent is None:
@@ -177,4 +192,3 @@ class SysPathManglingTest(PackageTest):
 
     def mangleSysPath(self, pathVar):
         sys.path[:] = pathVar
-

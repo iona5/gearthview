@@ -13,12 +13,11 @@ import traceback
 import pdb
 import linecache
 
-from twisted.python.compat import NativeStringIO, _PY3
-from twisted.python import _reflectpy3 as reflect
+from twisted.python.compat import _PY3, NativeStringIO
+from twisted.python import reflect
 from twisted.python import failure
-from twisted.internet import defer
 
-from twisted.trial.unittest import SynchronousTestCase
+from twisted.trial.unittest import SkipTest, SynchronousTestCase
 
 
 try:
@@ -42,7 +41,7 @@ def getDivisionFailure(*args, **kwargs):
     return f
 
 
-class FailureTestCase(SynchronousTestCase):
+class FailureTests(SynchronousTestCase):
     """
     Tests for L{failure.Failure}.
     """
@@ -60,30 +59,80 @@ class FailureTestCase(SynchronousTestCase):
         self.assertEqual(f.type, NotImplementedError)
 
 
-    def test_notTrapped(self):
+    def test_trapRaisesWrappedException(self):
         """
-        Making sure L{trap} doesn't trap what it shouldn't.
+        If the wrapped C{Exception} is not a subclass of one of the
+        expected types, L{failure.Failure.trap} raises the wrapped
+        C{Exception}.
         """
+        if not _PY3:
+            raise SkipTest(
+                """
+                Only expected behaviour on Python 3.
+                @see U{http://twisted.readthedocs.io/en/latest/core/howto/python3.html#twisted-python-failure}
+                """
+            )
+
         exception = ValueError()
         try:
             raise exception
         except:
             f = failure.Failure()
 
-        # On Python 2, the same failure is reraised:
-        if not _PY3:
-            untrapped = self.assertRaises(failure.Failure, f.trap, OverflowError)
-            self.assertIdentical(f, untrapped)
+        untrapped = self.assertRaises(ValueError, f.trap, OverflowError)
+        self.assertIs(exception, untrapped)
 
-        # On both Python 2 and Python 3, the underlying exception is passed
-        # on:
+
+    def test_trapRaisesSelf(self):
+        """
+        If the wrapped C{Exception} is not a subclass of one of the
+        expected types, L{failure.Failure.trap} raises itself.
+        """
+        if _PY3:
+            raise SkipTest(
+                """
+                Only expected behaviour on Python 2.
+                @see U{http://twisted.readthedocs.io/en/latest/core/howto/python3.html#twisted-python-failure}
+                """
+            )
+
+        exception = ValueError()
         try:
-            f.trap(OverflowError)
+            raise exception
         except:
-            untrapped = failure.Failure()
-            self.assertIdentical(untrapped.value, exception)
-        else:
-            self.fail("Exception was not re-raised.")
+            f = failure.Failure()
+
+        untrapped = self.assertRaises(failure.Failure, f.trap, OverflowError)
+        self.assertIs(f, untrapped)
+
+
+    def test_failureValueFromFailure(self):
+        """
+        A L{failure.Failure} constructed from another
+        L{failure.Failure} instance, has its C{value} property set to
+        the value of that L{failure.Failure} instance.
+        """
+        exception = ValueError()
+        f1 = failure.Failure(exception)
+        f2 = failure.Failure(f1)
+        self.assertIs(f2.value, exception)
+
+
+    def test_failureValueFromFoundFailure(self):
+        """
+        A L{failure.Failure} constructed without a C{exc_value}
+        argument, will search for an "original" C{Failure}, and if
+        found, its value will be used as the value for the new
+        C{Failure}.
+        """
+        exception = ValueError()
+        f1 = failure.Failure(exception)
+        try:
+            f1.trap(OverflowError)
+        except:
+            f2 = failure.Failure()
+
+        self.assertIs(f2.value, exception)
 
 
     def assertStartsWith(self, s, prefix):
@@ -172,6 +221,9 @@ class FailureTestCase(SynchronousTestCase):
         """
         if captureVars:
             exampleLocalVar = 'xyz'
+            # Silence the linter as this variable is checked via
+            # the traceback.
+            exampleLocalVar
 
         f = getDivisionFailure(captureVars=captureVars)
         out = NativeStringIO()
@@ -227,6 +279,9 @@ class FailureTestCase(SynchronousTestCase):
         """
         if captureVars:
             exampleLocalVar = 'abcde'
+            # Silence the linter as this variable is checked via
+            # the traceback.
+            exampleLocalVar
 
         f = getDivisionFailure()
         out = NativeStringIO()
@@ -236,17 +291,13 @@ class FailureTestCase(SynchronousTestCase):
         for method, filename, lineno, localVars, globalVars in f.frames:
             stack += '%s:%s:%s\n' % (filename, lineno, method)
 
-        if _PY3:
-            zde = "class 'ZeroDivisionError'"
-        else:
-            zde = "type 'exceptions.ZeroDivisionError'"
-
+        zde = repr(ZeroDivisionError)
         self.assertTracebackFormat(tb,
-            "Traceback: <%s>: " % (zde,),
+            "Traceback: %s: " % (zde,),
             "%s\n%s" % (failure.EXCEPTION_CAUGHT_HERE, stack))
 
         if captureVars:
-            self.assertEqual(None, re.search('exampleLocalVar.*abcde', tb))
+            self.assertIsNone(re.search('exampleLocalVar.*abcde', tb))
 
 
     def assertDefaultTraceback(self, captureVars=False):
@@ -274,6 +325,9 @@ class FailureTestCase(SynchronousTestCase):
         """
         if captureVars:
             exampleLocalVar = 'xyzzy'
+            # Silence the linter as this variable is checked via
+            # the traceback.
+            exampleLocalVar
 
         f = getDivisionFailure(captureVars=captureVars)
         out = NativeStringIO()
@@ -292,7 +346,7 @@ class FailureTestCase(SynchronousTestCase):
             reflect.qual(f.type), reflect.safe_str(f.value)))
 
         if captureVars:
-            self.assertEqual(None, re.search('exampleLocalVar.*xyzzy', tb))
+            self.assertIsNone(re.search('exampleLocalVar.*xyzzy', tb))
 
 
     def test_printDetailedTraceback(self):
@@ -365,7 +419,7 @@ class FailureTestCase(SynchronousTestCase):
             detail='noisia')
 
 
-    def testExplictPass(self):
+    def test_ExplictPass(self):
         e = RuntimeError()
         f = failure.Failure(e)
         f.trap(RuntimeError)
@@ -383,21 +437,10 @@ class FailureTestCase(SynchronousTestCase):
                 "f.raiseException() didn't raise ZeroDivisionError!?")
 
 
-    def testRaiseExceptionWithTB(self):
+    def test_RaiseExceptionWithTB(self):
         f = getDivisionFailure()
         innerline = self._getInnermostFrameLine(f)
         self.assertEqual(innerline, '1/0')
-
-
-    def testLackOfTB(self):
-        f = getDivisionFailure()
-        f.cleanFailure()
-        innerline = self._getInnermostFrameLine(f)
-        self.assertEqual(innerline, '1/0')
-
-    testLackOfTB.todo = "the traceback is not preserved, exarkun said he'll try to fix this! god knows how"
-    if _PY3:
-        del testLackOfTB # fix in ticket #6008
 
 
     def test_stringExceptionConstruction(self):
@@ -409,12 +452,14 @@ class FailureTestCase(SynchronousTestCase):
         self.assertIn("Strings are not supported by Failure", str(exc))
 
 
-    def testConstructionFails(self):
+    def test_ConstructionFails(self):
         """
         Creating a Failure with no arguments causes it to try to discover the
         current interpreter exception state.  If no such state exists, creating
         the Failure should raise a synchronous exception.
         """
+        if sys.version_info < (3, 0):
+            sys.exc_clear()
         self.assertRaises(failure.NoCurrentExceptionError, failure.Failure)
 
 
@@ -449,7 +494,7 @@ class FailureTestCase(SynchronousTestCase):
         expected = traceback.extract_tb(f.getTracebackObject())
         f.cleanFailure()
         observed = traceback.extract_tb(f.getTracebackObject())
-        self.assertNotEqual(None, expected)
+        self.assertIsNotNone(expected)
         self.assertEqual(expected, observed)
 
 
@@ -474,7 +519,7 @@ class FailureTestCase(SynchronousTestCase):
         None is a good value, because traceback.extract_tb(None) -> [].
         """
         f = failure.Failure(Exception("some error"))
-        self.assertEqual(f.getTracebackObject(), None)
+        self.assertIsNone(f.getTracebackObject())
 
 
     def test_tracebackFromExceptionInPython3(self):
@@ -488,23 +533,36 @@ class FailureTestCase(SynchronousTestCase):
         except:
             klass, exception, tb = sys.exc_info()
         f = failure.Failure(exception)
-        self.assertIdentical(f.tb, tb)
+        self.assertIs(f.tb, tb)
 
 
     def test_cleanFailureRemovesTracebackInPython3(self):
         """
         L{failure.Failure.cleanFailure} sets the C{__traceback__} attribute of
-        the exception to C{None} in Python 3.
+        the exception to L{None} in Python 3.
         """
         f = getDivisionFailure()
-        self.assertNotEqual(f.tb, None)
-        self.assertIdentical(f.value.__traceback__, f.tb)
+        self.assertIsNotNone(f.tb)
+        self.assertIs(f.value.__traceback__, f.tb)
         f.cleanFailure()
-        self.assertIdentical(f.value.__traceback__, None)
+        self.assertIsNone(f.value.__traceback__)
 
-    if not _PY3:
+    if getattr(BaseException, "__traceback__", None) is None:
         test_tracebackFromExceptionInPython3.skip = "Python 3 only."
         test_cleanFailureRemovesTracebackInPython3.skip = "Python 3 only."
+
+
+    def test_repr(self):
+        """
+        The C{repr} of a L{failure.Failure} shows the type and string
+        representation of the underlying exception.
+        """
+        f = getDivisionFailure()
+        typeName = reflect.fullyQualifiedName(ZeroDivisionError)
+        self.assertEqual(
+            repr(f),
+            '<twisted.python.failure.Failure '
+            '%s: division by zero>' % (typeName,))
 
 
 
@@ -621,13 +679,13 @@ class FindFailureTests(SynchronousTestCase):
     def test_findNoFailureInExceptionHandler(self):
         """
         Within an exception handler, _findFailure should return
-        C{None} in case no Failure is associated with the current
+        L{None} in case no Failure is associated with the current
         exception.
         """
         try:
             1/0
         except:
-            self.assertEqual(failure.Failure._findFailure(), None)
+            self.assertIsNone(failure.Failure._findFailure())
         else:
             self.fail("No exception raised from 1/0!?")
 
@@ -636,8 +694,10 @@ class FindFailureTests(SynchronousTestCase):
         """
         Outside of an exception handler, _findFailure should return None.
         """
-        self.assertEqual(sys.exc_info()[-1], None) #environment sanity check
-        self.assertEqual(failure.Failure._findFailure(), None)
+        if sys.version_info < (3, 0):
+            sys.exc_clear()
+        self.assertIsNone(sys.exc_info()[-1]) #environment sanity check
+        self.assertIsNone(failure.Failure._findFailure())
 
 
     def test_findFailure(self):
@@ -662,6 +722,8 @@ class FindFailureTests(SynchronousTestCase):
         handler that is handling an exception raised by
         raiseException, the new Failure should be chained to that
         original Failure.
+        Means the new failure should still show the same origin frame,
+        but with different complete stack trace (as not thrown at same place).
         """
         f = getDivisionFailure()
         f.cleanFailure()
@@ -669,7 +731,10 @@ class FindFailureTests(SynchronousTestCase):
             f.raiseException()
         except:
             newF = failure.Failure()
-            self.assertEqual(f.getTraceback(), newF.getTraceback())
+            tb = f.getTraceback().splitlines()
+            new_tb = newF.getTraceback().splitlines()
+            self.assertNotEqual(tb, new_tb)
+            self.assertEqual(tb[-3:], new_tb[-3:])
         else:
             self.fail("No exception raised from raiseException!?")
 
@@ -695,7 +760,19 @@ class FindFailureTests(SynchronousTestCase):
 
 
 
-class TestFormattableTraceback(SynchronousTestCase):
+# On Python 3.5, extract_tb returns "FrameSummary" objects, which are almost
+# like the old tuples. This being different does not affect the actual tests
+# as we are testing that the input works, and that extract_tb returns something
+# reasonable.
+if sys.version_info < (3, 5):
+    _tb = lambda fn, lineno, name, text: (fn, lineno, name, text)
+else:
+    from traceback import FrameSummary
+    _tb = lambda fn, lineno, name, text: FrameSummary(fn, lineno, name)
+
+
+
+class FormattableTracebackTests(SynchronousTestCase):
     """
     Whitebox tests that show that L{failure._Traceback} constructs objects that
     can be used by L{traceback.extract_tb}.
@@ -710,12 +787,12 @@ class TestFormattableTraceback(SynchronousTestCase):
         to be passed to L{traceback.extract_tb}, and we should get a singleton
         list containing a (filename, lineno, methodname, line) tuple.
         """
-        tb = failure._Traceback([['method', 'filename.py', 123, {}, {}]])
+        tb = failure._Traceback([], [['method', 'filename.py', 123, {}, {}]])
         # Note that we don't need to test that extract_tb correctly extracts
         # the line's contents. In this case, since filename.py doesn't exist,
         # it will just use None.
         self.assertEqual(traceback.extract_tb(tb),
-                         [('filename.py', 123, 'method', None)])
+                         [_tb('filename.py', 123, 'method', None)])
 
 
     def test_manyFrames(self):
@@ -725,15 +802,26 @@ class TestFormattableTraceback(SynchronousTestCase):
         containing a tuple for each frame.
         """
         tb = failure._Traceback([
+            ['caller1', 'filename.py', 7, {}, {}],
+            ['caller2', 'filename.py', 8, {}, {}],
+        ], [
             ['method1', 'filename.py', 123, {}, {}],
-            ['method2', 'filename.py', 235, {}, {}]])
+            ['method2', 'filename.py', 235, {}, {}],
+        ])
         self.assertEqual(traceback.extract_tb(tb),
-                         [('filename.py', 123, 'method1', None),
-                          ('filename.py', 235, 'method2', None)])
+                         [_tb('filename.py', 123, 'method1', None),
+                          _tb('filename.py', 235, 'method2', None)])
+
+        # We should also be able to extract_stack on it
+        self.assertEqual(traceback.extract_stack(tb.tb_frame),
+                         [_tb('filename.py', 7, 'caller1', None),
+                          _tb('filename.py', 8, 'caller2', None),
+                          _tb('filename.py', 123, 'method1', None),
+                          ])
 
 
 
-class TestFrameAttributes(SynchronousTestCase):
+class FrameAttributesTests(SynchronousTestCase):
     """
     _Frame objects should possess some basic attributes that qualify them as
     fake python Frame objects.
@@ -745,14 +833,16 @@ class TestFrameAttributes(SynchronousTestCase):
         bound to C{dict} instance.  They also have the C{f_code} attribute
         bound to something like a code object.
         """
-        frame = failure._Frame("dummyname", "dummyfilename")
+        frame = failure._Frame(
+            ("dummyname", "dummyfilename", None, None, None), None
+        )
         self.assertIsInstance(frame.f_globals, dict)
         self.assertIsInstance(frame.f_locals, dict)
         self.assertIsInstance(frame.f_code, failure._Code)
 
 
 
-class TestDebugMode(SynchronousTestCase):
+class DebugModeTests(SynchronousTestCase):
     """
     Failure's debug mode should allow jumping into the debugger.
     """
@@ -763,16 +853,10 @@ class TestDebugMode(SynchronousTestCase):
         """
         # Make sure any changes we make are reversed:
         post_mortem = pdb.post_mortem
-        if _PY3:
-            origInit = failure.Failure.__init__
-        else:
-            origInit = failure.Failure.__dict__['__init__']
+        origInit = failure.Failure.__init__
         def restore():
             pdb.post_mortem = post_mortem
-            if _PY3:
-                failure.Failure.__init__ = origInit
-            else:
-                failure.Failure.__dict__['__init__'] = origInit
+            failure.Failure.__init__ = origInit
         self.addCleanup(restore)
 
         self.result = []
@@ -791,7 +875,7 @@ class TestDebugMode(SynchronousTestCase):
             typ, exc, tb = sys.exc_info()
             f = failure.Failure()
         self.assertEqual(self.result, [tb])
-        self.assertEqual(f.captureVars, False)
+        self.assertFalse(f.captureVars)
 
 
     def test_captureVars(self):
@@ -805,7 +889,7 @@ class TestDebugMode(SynchronousTestCase):
             typ, exc, tb = sys.exc_info()
             f = failure.Failure(captureVars=True)
         self.assertEqual(self.result, [tb])
-        self.assertEqual(f.captureVars, True)
+        self.assertTrue(f.captureVars)
 
 
 
@@ -813,34 +897,6 @@ class ExtendedGeneratorTests(SynchronousTestCase):
     """
     Tests C{failure.Failure} support for generator features added in Python 2.5
     """
-
-    def test_inlineCallbacksTracebacks(self):
-        """
-        inlineCallbacks that re-raise tracebacks into their deferred
-        should not lose their tracebacks.
-        """
-        f = getDivisionFailure()
-        d = defer.Deferred()
-        try:
-            f.raiseException()
-        except:
-            d.errback()
-
-        failures = []
-        def collect_error(result):
-            failures.append(result)
-
-        def ic(d):
-            yield d
-        ic = defer.inlineCallbacks(ic)
-        ic(d).addErrback(collect_error)
-
-        newFailure, = failures
-        self.assertEqual(
-            traceback.extract_tb(newFailure.getTracebackObject())[-1][-1],
-            "1/0"
-        )
-
 
     def _throwIntoGenerator(self, f, g):
         try:
@@ -870,7 +926,7 @@ class ExtendedGeneratorTests(SynchronousTestCase):
         self._throwIntoGenerator(f, g)
 
         self.assertEqual(stuff[0][0], ZeroDivisionError)
-        self.assertTrue(isinstance(stuff[0][1], ZeroDivisionError))
+        self.assertIsInstance(stuff[0][1], ZeroDivisionError)
 
         self.assertEqual(traceback.extract_tb(stuff[0][2])[-1][-1], "1/0")
 
@@ -909,6 +965,7 @@ class ExtendedGeneratorTests(SynchronousTestCase):
         """
         f = getDivisionFailure()
         f.cleanFailure()
+        original_failure_str = f.getTraceback()
 
         newFailures = []
 
@@ -924,20 +981,15 @@ class ExtendedGeneratorTests(SynchronousTestCase):
         self._throwIntoGenerator(f, g)
 
         self.assertEqual(len(newFailures), 1)
-        self.assertEqual(newFailures[0].getTraceback(), f.getTraceback())
 
-    if _PY3:
-        test_inlineCallbacksTracebacks.todo = (
-            "Python 3 support to be fixed in #5949")
-        test_findFailureInGenerator.todo = (
-            "Python 3 support to be fixed in #5949")
-        test_failureConstructionFindsOriginalFailure.todo = (
-            "Python 3 support to be fixed in #5949")
-        # Remove these three lines in #6008:
-        del test_findFailureInGenerator
-        del test_failureConstructionFindsOriginalFailure
-        del test_inlineCallbacksTracebacks
+        # The original failure should not be changed.
+        self.assertEqual(original_failure_str, f.getTraceback())
 
+        # The new failure should be different and contain stack info for
+        # our generator.
+        self.assertNotEqual(newFailures[0].getTraceback(), f.getTraceback())
+        self.assertIn("generator", newFailures[0].getTraceback())
+        self.assertNotIn("generator", f.getTraceback())
 
     def test_ambiguousFailureInGenerator(self):
         """

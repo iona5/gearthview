@@ -16,7 +16,7 @@ def stringyString(object, indentation=''):
     elements.  This function also turns these sequence types
     into strings, but uses C{str()} on their elements instead.
 
-    Sequence elements are also displayed on seperate lines, and nested
+    Sequence elements are also displayed on separate lines, and nested
     sequences have nested indentation.
     """
     braces = ''
@@ -187,7 +187,7 @@ def strFile(p, f, caseSensitive=True):
 
     @rtype: C{bool}
     """
-    buf = ""
+    buf = type(p)()
     buf_len = max(len(p), 2**2**2**2)
     if not caseSensitive:
         p = p.lower()

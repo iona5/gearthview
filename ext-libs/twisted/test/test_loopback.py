@@ -9,9 +9,8 @@ from __future__ import division, absolute_import
 
 from zope.interface import implementer
 
-from twisted.python.compat import _PY3, intToBytes
+from twisted.python.compat import intToBytes
 from twisted.trial import unittest
-from twisted.trial.util import suppress as SUPPRESS
 from twisted.protocols import basic, loopback
 from twisted.internet import defer
 from twisted.internet.protocol import Protocol
@@ -26,14 +25,18 @@ class SimpleProtocol(basic.LineReceiver):
         self.lines = []
         self.connLost = []
 
+
     def connectionMade(self):
         self.conn.callback(None)
+
 
     def lineReceived(self, line):
         self.lines.append(line)
 
+
     def connectionLost(self, reason):
         self.connLost.append(reason)
+
 
 
 class DoomProtocol(SimpleProtocol):
@@ -47,6 +50,7 @@ class DoomProtocol(SimpleProtocol):
         SimpleProtocol.lineReceived(self, line)
         if self.lines[-1] == b"Hello 3":
             self.transport.loseConnection()
+
 
 
 class LoopbackTestCaseMixin:
@@ -66,6 +70,7 @@ class LoopbackTestCaseMixin:
         d = defer.maybeDeferred(self.loopbackFunc, s, c)
         d.addCallback(check)
         return d
+
 
     def testSneakyHiddenDoom(self):
         s = DoomProtocol()
@@ -87,7 +92,7 @@ class LoopbackTestCaseMixin:
 
 
 
-class LoopbackAsyncTestCase(LoopbackTestCaseMixin, unittest.TestCase):
+class LoopbackAsyncTests(LoopbackTestCaseMixin, unittest.TestCase):
     loopbackFunc = staticmethod(loopback.loopbackAsync)
 
 
@@ -104,8 +109,8 @@ class LoopbackAsyncTestCase(LoopbackTestCaseMixin, unittest.TestCase):
         server = TestProtocol()
         client = TestProtocol()
         loopback.loopbackAsync(server, client)
-        self.failIfEqual(client.transport, None)
-        self.failIfEqual(server.transport, None)
+        self.assertIsNotNone(client.transport)
+        self.assertIsNotNone(server.transport)
 
 
     def _hostpeertest(self, get, testServer):
@@ -130,7 +135,7 @@ class LoopbackAsyncTestCase(LoopbackTestCaseMixin, unittest.TestCase):
 
         def connected(transport):
             host = getattr(transport, get)()
-            self.failUnless(IAddress.providedBy(host))
+            self.assertTrue(IAddress.providedBy(host))
 
         return d.addCallback(connected)
 
@@ -334,7 +339,6 @@ class LoopbackAsyncTestCase(LoopbackTestCaseMixin, unittest.TestCase):
                 self.wasReady = self.ready
                 self.transport.loseConnection()
 
-
         server = Server()
         client = Client()
         d = loopback.loopbackAsync(client, server)
@@ -418,14 +422,53 @@ class LoopbackAsyncTestCase(LoopbackTestCaseMixin, unittest.TestCase):
 
 
 
-class LoopbackTCPTestCase(LoopbackTestCaseMixin, unittest.TestCase):
+class LoopbackTCPTests(LoopbackTestCaseMixin, unittest.TestCase):
     loopbackFunc = staticmethod(loopback.loopbackTCP)
 
 
-class LoopbackUNIXTestCase(LoopbackTestCaseMixin, unittest.TestCase):
+
+class LoopbackUNIXTests(LoopbackTestCaseMixin, unittest.TestCase):
     loopbackFunc = staticmethod(loopback.loopbackUNIX)
 
     if interfaces.IReactorUNIX(reactor, None) is None:
         skip = "Current reactor does not support UNIX sockets"
-    elif _PY3:
-        skip = "UNIX sockets not supported on Python 3.  See #6136"
+
+
+
+class LoopbackRelayTest(unittest.TestCase):
+    """
+    Test for L{twisted.protocols.loopback.LoopbackRelay}
+    """
+    class Receiver(Protocol):
+        """
+        Simple Receiver class used for testing LoopbackRelay
+        """
+        data = b''
+        def dataReceived(self, data):
+            "Accumulate received data for verification"
+            self.data += data
+
+
+    def test_write(self):
+        "Test to verify that the write function works as expected"
+        receiver = self.Receiver()
+        relay = loopback.LoopbackRelay(receiver)
+        relay.write(b'abc')
+        relay.write(b'def')
+        self.assertEqual(receiver.data, b'')
+        relay.clearBuffer()
+        self.assertEqual(receiver.data, b'abcdef')
+
+
+    def test_writeSequence(self):
+        "Test to verify that the writeSequence function works as expected"
+        receiver = self.Receiver()
+        relay = loopback.LoopbackRelay(receiver)
+        relay.writeSequence(
+            [b'The ', b'quick ', b'brown ', b'fox '])
+        relay.writeSequence(
+            [b'jumps ', b'over ', b'the lazy dog'])
+        self.assertEqual(receiver.data, b'')
+        relay.clearBuffer()
+        self.assertEqual(
+            receiver.data, b'The quick brown fox jumps over the lazy dog')

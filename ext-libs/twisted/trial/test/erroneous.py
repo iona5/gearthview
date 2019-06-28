@@ -63,6 +63,36 @@ class AsynchronousTestFailureInTearDown(
 
 
 
+class FailureButTearDownRunsMixin(object):
+    """
+    A test fails, but its L{tearDown} still runs.
+    """
+    tornDown = False
+
+    def tearDown(self):
+        self.tornDown = True
+
+
+    def test_fails(self):
+        """
+        A test that fails.
+        """
+        raise FoolishError("I am a broken test")
+
+
+
+class SynchronousTestFailureButTearDownRuns(
+        FailureButTearDownRunsMixin, unittest.SynchronousTestCase):
+    pass
+
+
+
+class AsynchronousTestFailureButTearDownRuns(
+        FailureButTearDownRunsMixin, unittest.TestCase):
+    pass
+
+
+
 class TestRegularFail(unittest.SynchronousTestCase):
 
     def test_fail(self):
@@ -139,7 +169,7 @@ class DelayedCall(unittest.TestCase):
         What happens if an error is raised in a DelayedCall and an error is
         also raised in the test?
 
-        L{test_reporter.TestErrorReporting.testHiddenException} checks that
+        L{test_reporter.ErrorReportingTests.testHiddenException} checks that
         both errors get reported.
 
         Note that this behaviour is deprecated. A B{real} test would return a

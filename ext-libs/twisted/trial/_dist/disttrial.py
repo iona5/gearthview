@@ -3,13 +3,14 @@
 # See LICENSE for details.
 
 """
-This module containts the trial distributed runner, the management class
+This module contains the trial distributed runner, the management class
 responsible for coordinating all of trial's behavior at the highest level.
 
 @since: 12.3
 """
 
-import sys, os
+import os
+import sys
 
 from twisted.python.filepath import FilePath
 from twisted.python.modules import theSystemPath
@@ -17,7 +18,7 @@ from twisted.internet.defer import DeferredList
 from twisted.internet.task import cooperate
 
 from twisted.trial.util import _unusedTestDirectory
-from twisted.trial.unittest import _iterateTests
+from twisted.trial._asyncrunner import _iterateTests
 from twisted.trial._dist.worker import LocalWorker, LocalWorkerAMP
 from twisted.trial._dist.distreporter import DistReporter
 from twisted.trial.reporter import UncleanWarningsReporterWrapper
@@ -115,11 +116,16 @@ class DistTrialRunner(object):
             'twisted.trial._dist.workertrial'].filePath.path
         childFDs = {0: 'w', 1: 'r', 2: 'r', _WORKER_AMP_STDIN: 'w',
                     _WORKER_AMP_STDOUT: 'r'}
+        environ = os.environ.copy()
+        # Add an environment variable containing the raw sys.path, to be used by
+        # subprocesses to make sure it's identical to the parent. See
+        # workertrial._setupPath.
+        environ['TRIAL_PYTHONPATH'] = os.pathsep.join(sys.path)
         for worker in protocols:
             args = [sys.executable, workertrialPath]
             args.extend(arguments)
             spawner(worker, sys.executable, args=args, childFDs=childFDs,
-                    env=os.environ)
+                    env=environ)
 
 
     def _driveWorker(self, worker, result, testCases, cooperate):
@@ -189,7 +195,7 @@ class DistTrialRunner(object):
         testDir, testDirLock = _unusedTestDirectory(
             FilePath(self._workingDirectory))
         workerNumber = min(count, self._workerNumber)
-        ampWorkers = [LocalWorkerAMP() for x in xrange(workerNumber)]
+        ampWorkers = [LocalWorkerAMP() for x in range(workerNumber)]
         workers = self.createLocalWorkers(ampWorkers, testDir.path)
         processEndDeferreds = [worker.endDeferred for worker in workers]
         self.launchWorkerProcesses(reactor.spawnProcess, workers,

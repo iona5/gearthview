@@ -20,23 +20,19 @@ __all__ = ['TestTimeoutError', 'ReactorBuilder', 'needsRunningReactor']
 
 import os, signal, time
 
-from twisted.python.compat import _PY3
 from twisted.trial.unittest import SynchronousTestCase, SkipTest
 from twisted.trial.util import DEFAULT_TIMEOUT_DURATION, acquireAttribute
 from twisted.python.runtime import platform
-from twisted.python._reflectpy3 import namedAny
+from twisted.python.reflect import namedAny
 from twisted.python.deprecate import _fullyQualifiedName as fullyQualifiedName
 
 from twisted.python import log
 from twisted.python.failure import Failure
+from twisted.python.compat import _PY3
 
 
 # Access private APIs.
 if platform.isWindows():
-    process = None
-elif _PY3:
-    # Enable this on Python 3 when twisted.internet.process is ported.
-    # See #5968.
     process = None
 else:
     from twisted.internet import process
@@ -76,6 +72,36 @@ def needsRunningReactor(reactor, thunk):
 
 
 
+def stopOnError(case, reactor, publisher=None):
+    """
+    Stop the reactor as soon as any error is logged on the given publisher.
+
+    This is beneficial for tests which will wait for a L{Deferred} to fire
+    before completing (by passing or failing).  Certain implementation bugs may
+    prevent the L{Deferred} from firing with any result at all (consider a
+    protocol's {dataReceived} method that raises an exception: this exception
+    is logged but it won't ever cause a L{Deferred} to fire).  In that case the
+    test would have to complete by timing out which is a much less desirable
+    outcome than completing as soon as the unexpected error is encountered.
+
+    @param case: A L{SynchronousTestCase} to use to clean up the necessary log
+        observer when the test is over.
+    @param reactor: The reactor to stop.
+    @param publisher: A L{LogPublisher} to watch for errors.  If L{None}, the
+        global log publisher will be watched.
+    """
+    if publisher is None:
+        from twisted.python import log as publisher
+    running = [None]
+    def stopIfError(event):
+        if running and event.get('isError'):
+            running.pop()
+            reactor.stop()
+    publisher.addObserver(stopIfError)
+    case.addCleanup(publisher.removeObserver, stopIfError)
+
+
+
 class ReactorBuilder:
     """
     L{SynchronousTestCase} mixin which provides a reactor-creation API.  This
@@ -87,7 +113,7 @@ class ReactorBuilder:
         which the tests defined by this class will be skipped to strings
         giving the skip message.
     @cvar requiredInterfaces: A C{list} of interfaces which the reactor must
-        provide or these tests will be skipped.  The default, C{None}, means
+        provide or these tests will be skipped.  The default, L{None}, means
         that no interfaces are required.
     @ivar reactorFactory: A no-argument callable which returns the reactor to
         use for testing.
@@ -121,6 +147,11 @@ class ReactorBuilder:
                 "twisted.internet.gtk2reactor.Gtk2Reactor",
                 "twisted.internet.gireactor.GIReactor",
                 "twisted.internet.gtk3reactor.Gtk3Reactor"])
+
+        if _PY3:
+            _reactors.append(
+                "twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+
         if platform.isMacOSX():
             _reactors.append("twisted.internet.cfreactor.CFReactor")
         else:
@@ -270,7 +301,7 @@ class ReactorBuilder:
         @param timeout: The maximum amount of time, specified in seconds, to
             allow the reactor to run.  If the reactor is still running after
             this much time has elapsed, it will be stopped and an exception
-            raised.  If C{None}, the default test method timeout imposed by
+            raised.  If L{None}, the default test method timeout imposed by
             Trial will be used.  This depends on the L{IReactorTime}
             implementation of C{reactor} for correct operation.
 
@@ -285,11 +316,13 @@ class ReactorBuilder:
             timedOut.append(None)
             reactor.stop()
 
-        reactor.callLater(timeout, stop)
+        timedOutCall = reactor.callLater(timeout, stop)
         reactor.run()
         if timedOut:
             raise TestTimeoutError(
                 "reactor still running after %s seconds" % (timeout,))
+        else:
+            timedOutCall.cancel()
 
 
     def makeTestCaseClasses(cls):
@@ -300,7 +333,7 @@ class ReactorBuilder:
         classes = {}
         for reactor in cls._reactors:
             shortReactorName = reactor.split(".")[-1]
-            name = (cls.__name__ + "." + shortReactorName).replace(".", "_")
+            name = (cls.__name__ + "." + shortReactorName + "Tests").replace(".", "_")
             class testcase(cls, SynchronousTestCase):
                 __module__ = cls.__module__
                 if reactor in cls.skippedReactors:
@@ -310,6 +343,8 @@ class ReactorBuilder:
                 except:
                     skip = Failure().getErrorMessage()
             testcase.__name__ = name
+            if hasattr(cls, "__qualname__"):
+                testcase.__qualname__ = ".".join(cls.__qualname__.split()[0:-1] + [name])
             classes[testcase.__name__] = testcase
         return classes
     makeTestCaseClasses = classmethod(makeTestCaseClasses)

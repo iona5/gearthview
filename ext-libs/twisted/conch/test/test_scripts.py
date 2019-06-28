@@ -4,27 +4,22 @@
 """
 Tests for the command-line interfaces to conch.
 """
+from twisted.python.reflect import requireModule
 
-try:
-    import pyasn1
-except ImportError:
-    pyasn1Skip =  "Cannot run without PyASN1"
-else:
+if requireModule('pyasn1'):
     pyasn1Skip = None
-
-try:
-    import Crypto
-except ImportError:
-    cryptoSkip = "can't run w/o PyCrypto"
 else:
+    pyasn1Skip =  "Cannot run without PyASN1"
+
+if requireModule('cryptography'):
     cryptoSkip = None
-
-try:
-    import tty
-except ImportError:
-    ttySkip = "can't run w/o tty"
 else:
+    cryptoSkip = "can't run w/o cryptography"
+
+if requireModule('tty'):
     ttySkip = None
+else:
+    ttySkip = "can't run w/o tty"
 
 try:
     import Tkinter
@@ -33,7 +28,7 @@ except ImportError:
 else:
     try:
         Tkinter.Tk().destroy()
-    except Tkinter.TclError, e:
+    except Tkinter.TclError as e:
         tkskip = "Can't test Tkinter: " + str(e)
     else:
         tkskip = None
@@ -71,7 +66,7 @@ class ScriptTests(TestCase, ScriptTestsMixin):
 
 
 
-class ZshIntegrationTestCase(TestCase, ZshScriptTestMixin):
+class ZshIntegrationTests(TestCase, ZshScriptTestMixin):
     """
     Test that zsh completion functions are generated without error
     """

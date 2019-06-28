@@ -114,7 +114,7 @@ class BadClient(protocol.DatagramProtocol):
 
 
 
-class UDPTestCase(unittest.TestCase):
+class UDPTests(unittest.TestCase):
 
     def test_oldAddress(self):
         """
@@ -267,6 +267,7 @@ class UDPTestCase(unittest.TestCase):
         return d
 
 
+
     def test_connectionRefused(self):
         """
         A L{ConnectionRefusedError} exception is raised when a connection
@@ -312,15 +313,16 @@ class UDPTestCase(unittest.TestCase):
 
     def test_badConnect(self):
         """
-        A call to the transport's connect method fails with a L{ValueError}
-        when a non-IP address is passed as the host value.
+        A call to the transport's connect method fails with an
+        L{InvalidAddressError} when a non-IP address is passed as the host
+        value.
 
         A call to a transport's connect method fails with a L{RuntimeError}
         when the transport is already connected.
         """
         client = GoodClient()
         port = reactor.listenUDP(0, client, interface="127.0.0.1")
-        self.assertRaises(ValueError, client.transport.connect,
+        self.assertRaises(error.InvalidAddressError, client.transport.connect,
                           "localhost", 80)
         client.transport.connect("127.0.0.1", 80)
         self.assertRaises(RuntimeError, client.transport.connect,
@@ -449,7 +451,7 @@ class UDPTestCase(unittest.TestCase):
 
 
 
-class ReactorShutdownInteraction(unittest.TestCase):
+class ReactorShutdownInteractionTests(unittest.TestCase):
     """Test reactor shutdown interaction"""
 
     def setUp(self):
@@ -498,7 +500,7 @@ class ReactorShutdownInteraction(unittest.TestCase):
 
 
 
-class MulticastTestCase(unittest.TestCase):
+class MulticastTests(unittest.TestCase):
 
     def setUp(self):
         self.server = Server()
@@ -610,7 +612,9 @@ class MulticastTestCase(unittest.TestCase):
             self.client.transport.joinGroup("127.0.0.1"),
             error.MulticastJoinError)
     if runtime.platform.isWindows() and not runtime.platform.isVista():
-        test_joinFailure.todo = "Windows' multicast is wonky"
+        # FIXME: https://twistedmatrix.com/trac/ticket/7780
+        test_joinFailure.skip = (
+            "Windows' UDP multicast is not yet fully supported.")
 
 
     def test_multicast(self):
@@ -691,18 +695,7 @@ class MulticastTestCase(unittest.TestCase):
 
 
 if not interfaces.IReactorUDP(reactor, None):
-    UDPTestCase.skip = "This reactor does not support UDP"
-    ReactorShutdownInteraction.skip = "This reactor does not support UDP"
+    UDPTests.skip = "This reactor does not support UDP"
+    ReactorShutdownInteractionTests.skip = "This reactor does not support UDP"
 if not interfaces.IReactorMulticast(reactor, None):
-    MulticastTestCase.skip = "This reactor does not support multicast"
-
-def checkForLinux22():
-    import os
-    if os.path.exists("/proc/version"):
-        s = open("/proc/version").read()
-        if s.startswith("Linux version"):
-            s = s.split()[2]
-            if s.split(".")[:2] == ["2", "2"]:
-                f = MulticastTestCase.testInterface.im_func
-                f.todo = "figure out why this fails in linux 2.2"
-checkForLinux22()
+    MulticastTests.skip = "This reactor does not support multicast"

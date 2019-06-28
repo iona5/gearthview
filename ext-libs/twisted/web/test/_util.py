@@ -1,4 +1,3 @@
-
 # Copyright (c) Twisted Matrix Laboratories.
 # See LICENSE for details.
 
@@ -6,17 +5,21 @@
 General helpers for L{twisted.web} unit tests.
 """
 
+from __future__ import division, absolute_import
+
 from twisted.internet.defer import succeed
 from twisted.web import server
 from twisted.trial.unittest import TestCase
 from twisted.python.failure import Failure
+
 from twisted.web._flatten import flattenString
 from twisted.web.error import FlattenerError
 
 
+
 def _render(resource, request):
     result = resource.render(request)
-    if isinstance(result, str):
+    if isinstance(result, bytes):
         request.write(result)
         request.finish()
         return succeed(None)
@@ -73,10 +76,9 @@ class FlattenTestCase(TestCase):
         """
         Assert flattening a root element raises a particular exception.
         """
-        d = self.assertFailure(self.assertFlattensTo(root, ''), FlattenerError)
+        d = self.assertFailure(self.assertFlattensTo(root, b''), FlattenerError)
         d.addCallback(lambda exc: self.assertIsInstance(exc._exception, exn))
         return d
 
 
-
-
+__all__ = ["_render", "FlattenTestCase"]

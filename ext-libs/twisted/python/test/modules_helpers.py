@@ -13,7 +13,7 @@ import sys
 from twisted.python.filepath import FilePath
 
 
-class TwistedModulesMixin:
+class TwistedModulesMixin(object):
     """
     A mixin for C{twisted.trial.unittest.SynchronousTestCase} providing useful
     methods for manipulating Python's module system.
@@ -43,17 +43,13 @@ class TwistedModulesMixin:
         sys.modules.update(sysModules)
 
 
-    def pathEntryWithOnePackage(self, pkgname=b"test_package"):
+    def pathEntryWithOnePackage(self, pkgname="test_package"):
         """
         Generate a L{FilePath} with one package, named C{pkgname}, on it, and
         return the L{FilePath} of the path entry.
         """
-        # Remove utf-8 encode and bytes for path segments when Filepath
-        # supports Unicode paths on Python 3 (#2366, #4736, #5203).
-        entry = FilePath(self.mktemp().encode("utf-8"))
-        pkg = entry.child(b"test_package")
+        entry = FilePath(self.mktemp())
+        pkg = entry.child("test_package")
         pkg.makedirs()
-        pkg.child(b"__init__.py").setContent(b"")
+        pkg.child("__init__.py").setContent(b"")
         return entry
-
-

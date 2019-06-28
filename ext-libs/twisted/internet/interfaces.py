@@ -61,18 +61,129 @@ class IResolverSimple(Interface):
         Resolve the domain name C{name} into an IP address.
 
         @type name: C{str}
-        @type timeout: C{tuple}
+        @param name: DNS name to resolve.
+
+        @type timeout: Sequence of C{int}
+        @param timeout: Number of seconds after which to reissue the query.
+            When the last timeout expires, the query is considered failed.
+
         @rtype: L{twisted.internet.defer.Deferred}
         @return: The callback of the Deferred that is returned will be
-        passed a string that represents the IP address of the specified
-        name, or the errback will be called if the lookup times out.  If
-        multiple types of address records are associated with the name,
-        A6 records will be returned in preference to AAAA records, which
-        will be returned in preference to A records.  If there are multiple
-        records of the type to be returned, one will be selected at random.
+            passed a string that represents the IP address of the
+            specified name, or the errback will be called if the
+            lookup times out.  If multiple types of address records
+            are associated with the name, A6 records will be returned
+            in preference to AAAA records, which will be returned in
+            preference to A records.  If there are multiple records of
+            the type to be returned, one will be selected at random.
 
-        @raise twisted.internet.defer.TimeoutError: Raised (asynchronously)
-        if the name cannot be resolved within the specified timeout period.
+        @raise twisted.internet.defer.TimeoutError: Raised
+            (asynchronously) if the name cannot be resolved within the
+            specified timeout period.
+        """
+
+
+
+class IHostResolution(Interface):
+    """
+    An L{IHostResolution} represents represents an in-progress recursive query
+    for a DNS name.
+
+    @since: Twisted 17.1.0
+    """
+
+    name = Attribute(
+        """
+        L{unicode}; the name of the host being resolved.
+        """
+    )
+
+    def cancel():
+        """
+        Stop the hostname resolution in progress.
+        """
+
+
+
+class IResolutionReceiver(Interface):
+    """
+    An L{IResolutionReceiver} receives the results of a hostname resolution in
+    progress, initiated by an L{IHostnameResolver}.
+
+    @since: Twisted 17.1.0
+    """
+
+    def resolutionBegan(resolutionInProgress):
+        """
+        A hostname resolution began.
+
+        @param resolutionInProgress: an L{IHostResolution}.
+        """
+
+
+    def addressResolved(address):
+        """
+        An internet address.  This is called when an address for the given name
+        is discovered.  In the current implementation this practically means
+        L{IPv4Address} or L{IPv6Address}, but implementations of this interface
+        should be lenient to other types being passed to this interface as
+        well, for future-proofing.
+
+        @param address: An address object.
+        @type address: L{IAddress}
+        """
+
+
+    def resolutionComplete():
+        """
+        Resolution has completed; no further addresses will be relayed to
+        L{IResolutionReceiver.addressResolved}.
+        """
+
+
+
+class IHostnameResolver(Interface):
+    """
+    An L{IHostnameResolver} can resolve a host name and port number into a
+    series of L{IAddress} objects.
+
+    @since: Twisted 17.1.0
+    """
+
+    def resolveHostName(resolutionReceiver, hostName, portNumber=0,
+                        addressTypes=None, transportSemantics='TCP'):
+        """
+        Initiate a hostname resolution.
+
+        @param resolutionReceiver: an object that will receive each resolved
+            address as it arrives.
+        @type resolutionReceiver: L{IResolutionReceiver}
+
+        @param hostName: The name of the host to resolve.  If this contains
+            non-ASCII code points, they will be converted to IDNA first.
+        @type hostName: L{unicode}
+
+        @param portNumber: The port number that the returned addresses should
+            include.
+        @type portNumber: L{int} greater than or equal to 0 and less than 65536
+
+        @param addressTypes: An iterable of implementors of L{IAddress} that
+            are acceptable values for C{resolutionReceiver} to receive to its
+            L{addressResolved <IResolutionReceiver.addressResolved>}.  In
+            practice, this means an iterable containing
+            L{twisted.internet.address.IPv4Address},
+            L{twisted.internet.address.IPv6Address}, both, or neither.
+        @type addressTypes: L{collections.abc.Iterable} of L{type}
+
+        @param transportSemantics: A string describing the semantics of the
+            transport; either C{'TCP'} for stream-oriented transports or
+            C{'UDP'} for datagram-oriented; see
+            L{twisted.internet.address.IPv6Address.type} and
+            L{twisted.internet.address.IPv4Address.type}.
+        @type transportSemantics: native L{str}
+
+        @return: The resolution in progress.
+        @rtype: L{IResolutionReceiver}
         """
 
 
@@ -105,7 +216,7 @@ class IResolver(IResolverSimple):
         """
         Perform an A record lookup.
 
-        @type name: C{str}
+        @type name: L{bytes}
         @param name: DNS name to resolve.
 
         @type timeout: Sequence of C{int}
@@ -643,7 +754,9 @@ class IReactorTCP(Interface):
         """
         Connect a TCP client.
 
-        @param host: a host name
+        @param host: A hostname or an IPv4 or IPv6 address literal.
+
+        @type host: L{bytes}
 
         @param port: a port number
 
@@ -680,7 +793,7 @@ class IReactorSSL(Interface):
                         connection has failed.
 
         @param bindAddress: a (host, port) tuple of local address to bind to,
-                            or C{None}.
+                            or L{None}.
 
         @return: An object which provides L{IConnector}.
         """
@@ -695,7 +808,7 @@ class IReactorSSL(Interface):
 
         @param factory: a L{twisted.internet.protocol.ServerFactory} instance
 
-        @param contextFactory: a L{twisted.internet.ssl.ContextFactory} instance
+        @param contextFactory: an implementor of L{IOpenSSLContextFactory}
 
         @param backlog: size of the listen queue
 
@@ -837,7 +950,21 @@ class IReactorUDP(Interface):
 
     def listenUDP(port, protocol, interface='', maxPacketSize=8192):
         """
-        Connects a given DatagramProtocol to the given numeric UDP port.
+        Connects a given L{DatagramProtocol} to the given numeric UDP port.
+
+        @param port: A port number on which to listen.
+        @type port: C{int}
+
+        @param protocol: A L{DatagramProtocol} instance which will be
+            connected to the given C{port}.
+        @type protocol: L{DatagramProtocol}
+
+        @param interface: The local IPv4 or IPv6 address to which to bind;
+            defaults to '', ie all IPv4 addresses.
+        @type interface: C{str}
+
+        @param maxPacketSize: The maximum packet size to accept.
+        @type maxPacketSize: C{int}
 
         @return: object which provides L{IListeningPort}.
         """
@@ -849,7 +976,7 @@ class IReactorMulticast(Interface):
     UDP socket methods that support multicast.
 
     IMPORTANT: This is an experimental new interface. It may change
-    without backwards compatability. Suggestions are welcome.
+    without backwards compatibility. Suggestions are welcome.
     """
 
     def listenMulticast(port, protocol, interface='', maxPacketSize=8192,
@@ -903,9 +1030,7 @@ class IReactorSocket(Interface):
 
     Some plans for extending this interface exist.  See:
 
-        - U{http://twistedmatrix.com/trac/ticket/5570}: established connections
-        - U{http://twistedmatrix.com/trac/ticket/5573}: AF_UNIX ports
-        - U{http://twistedmatrix.com/trac/ticket/5574}: SOCK_DGRAM sockets
+        - U{http://twistedmatrix.com/trac/ticket/6594}: AF_UNIX SOCK_DGRAM ports
     """
 
     def adoptStreamPort(fileDescriptor, addressFamily, factory):
@@ -929,12 +1054,13 @@ class IReactorSocket(Interface):
 
         @return: An object providing L{IListeningPort}.
 
-        @raise UnsupportedAddressFamily: If the given address family is not
-            supported by this reactor, or not supported with the given socket
-            type.
+        @raise twisted.internet.error.UnsupportedAddressFamily: If the
+            given address family is not supported by this reactor, or
+            not supported with the given socket type.
 
-        @raise UnsupportedSocketType: If the given socket type is not supported
-            by this reactor, or not supported with the given socket type.
+        @raise twisted.internet.error.UnsupportedSocketType: If the
+            given socket type is not supported by this reactor, or not
+            supported with the given socket type.
         """
 
 
@@ -970,6 +1096,42 @@ class IReactorSocket(Interface):
         """
 
 
+    def adoptDatagramPort(fileDescriptor, addressFamily, protocol,
+                          maxPacketSize=8192):
+        """
+        Add an existing listening I{SOCK_DGRAM} socket to the reactor to
+        monitor for read and write readiness.
+
+        @param fileDescriptor: A file descriptor associated with a socket which
+            is already bound to an address and marked as listening.  The socket
+            must be set non-blocking.  Any additional flags (for example,
+            close-on-exec) must also be set by application code.  Application
+            code is responsible for closing the file descriptor, which may be
+            done as soon as C{adoptDatagramPort} returns.
+        @type fileDescriptor: C{int}
+
+        @param addressFamily: The address family or I{domain} of the socket.
+            For example, L{socket.AF_INET6}.
+        @type addressFamily: C{int}
+
+        @param protocol: A L{DatagramProtocol} instance to connect to
+            a UDP transport.
+        @type protocol: L{DatagramProtocol}
+
+        @param maxPacketSize: The maximum packet size to accept.
+        @type maxPacketSize: C{int}
+
+        @return: An object providing L{IListeningPort}.
+
+        @raise UnsupportedAddressFamily: If the given address family is not
+            supported by this reactor, or not supported with the given socket
+            type.
+
+        @raise UnsupportedSocketType: If the given socket type is not supported
+            by this reactor, or not supported with the given socket type.
+        """
+
+
 
 class IReactorProcess(Interface):
 
@@ -978,83 +1140,94 @@ class IReactorProcess(Interface):
         """
         Spawn a process, with a process protocol.
 
+        Arguments given to this function that are listed as L{bytes} or
+        L{unicode} may be encoded or decoded depending on the platform and the
+        argument type given.  On UNIX systems (Linux, FreeBSD, macOS) and
+        Python 2 on Windows, L{unicode} arguments will be encoded down to
+        L{bytes} using the encoding given by L{os.getfilesystemencoding}, to be
+        used with the "narrow" OS APIs.  On Python 3 on Windows, L{bytes}
+        arguments will be decoded up to L{unicode} using the encoding given by
+        L{os.getfilesystemencoding} (C{mbcs} before Python 3.6, C{utf8}
+        thereafter) and given to Windows's native "wide" APIs.
+
         @type processProtocol: L{IProcessProtocol} provider
-        @param processProtocol: An object which will be notified of all
-            events related to the created process.
+        @param processProtocol: An object which will be notified of all events
+            related to the created process.
 
         @param executable: the file name to spawn - the full path should be
-                           used.
+            used.
+        @type executable: L{bytes} or L{unicode}
 
         @param args: the command line arguments to pass to the process; a
-                     sequence of strings. The first string should be the
-                     executable's name.
+            sequence of strings.  The first string should be the executable's
+            name.
+        @type args: L{list} with L{bytes} or L{unicode} items.
 
-        @type env: a C{dict} mapping C{str} to C{str}, or C{None}.
-        @param env: the environment variables to pass to the child process. The
-                    resulting behavior varies between platforms. If
-                      - C{env} is not set:
-                        - On POSIX: pass an empty environment.
-                        - On Windows: pass C{os.environ}.
-                      - C{env} is C{None}:
-                        - On POSIX: pass C{os.environ}.
-                        - On Windows: pass C{os.environ}.
-                      - C{env} is a C{dict}:
-                        - On POSIX: pass the key/value pairs in C{env} as the
-                          complete environment.
-                        - On Windows: update C{os.environ} with the key/value
-                          pairs in the C{dict} before passing it. As a
-                          consequence of U{bug #1640
-                          <http://twistedmatrix.com/trac/ticket/1640>}, passing
-                          keys with empty values in an effort to unset
-                          environment variables I{won't} unset them.
+        @type env: a L{dict} mapping L{bytes}/L{unicode} keys to
+            L{bytes}/L{unicode} items, or L{None}.
+        @param env: the environment variables to pass to the child process.
+            The resulting behavior varies between platforms.  If:
+
+                - C{env} is not set:
+                  - On POSIX: pass an empty environment.
+                  - On Windows: pass L{os.environ}.
+                - C{env} is L{None}:
+                  - On POSIX: pass L{os.environ}.
+                  - On Windows: pass L{os.environ}.
+                - C{env} is a L{dict}:
+                  - On POSIX: pass the key/value pairs in C{env} as the
+                    complete environment.
+                  - On Windows: update L{os.environ} with the key/value
+                    pairs in the L{dict} before passing it. As a
+                    consequence of U{bug #1640
+                    <http://twistedmatrix.com/trac/ticket/1640>}, passing
+                    keys with empty values in an effort to unset
+                    environment variables I{won't} unset them.
 
         @param path: the path to run the subprocess in - defaults to the
-                     current directory.
+            current directory.
+        @type path: L{bytes} or L{unicode} or L{None}
 
-        @param uid: user ID to run the subprocess as. (Only available on
-                    POSIX systems.)
+        @param uid: user ID to run the subprocess as.  (Only available on POSIX
+            systems.)
 
-        @param gid: group ID to run the subprocess as. (Only available on
-                    POSIX systems.)
+        @param gid: group ID to run the subprocess as.  (Only available on
+            POSIX systems.)
 
         @param usePTY: if true, run this process in a pseudo-terminal.
-                       optionally a tuple of C{(masterfd, slavefd, ttyname)},
-                       in which case use those file descriptors.
-                       (Not available on all systems.)
+            optionally a tuple of C{(masterfd, slavefd, ttyname)}, in which
+            case use those file descriptors.  (Not available on all systems.)
 
         @param childFDs: A dictionary mapping file descriptors in the new child
-                         process to an integer or to the string 'r' or 'w'.
+            process to an integer or to the string 'r' or 'w'.
 
-                         If the value is an integer, it specifies a file
-                         descriptor in the parent process which will be mapped
-                         to a file descriptor (specified by the key) in the
-                         child process.  This is useful for things like inetd
-                         and shell-like file redirection.
+            If the value is an integer, it specifies a file descriptor in the
+            parent process which will be mapped to a file descriptor (specified
+            by the key) in the child process.  This is useful for things like
+            inetd and shell-like file redirection.
 
-                         If it is the string 'r', a pipe will be created and
-                         attached to the child at that file descriptor: the
-                         child will be able to write to that file descriptor
-                         and the parent will receive read notification via the
-                         L{IProcessProtocol.childDataReceived} callback.  This
-                         is useful for the child's stdout and stderr.
+            If it is the string 'r', a pipe will be created and attached to the
+            child at that file descriptor: the child will be able to write to
+            that file descriptor and the parent will receive read notification
+            via the L{IProcessProtocol.childDataReceived} callback.  This is
+            useful for the child's stdout and stderr.
 
-                         If it is the string 'w', similar setup to the previous
-                         case will occur, with the pipe being readable by the
-                         child instead of writeable.  The parent process can
-                         write to that file descriptor using
-                         L{IProcessTransport.writeToChild}.  This is useful for
-                         the child's stdin.
+            If it is the string 'w', similar setup to the previous case will
+            occur, with the pipe being readable by the child instead of
+            writeable.  The parent process can write to that file descriptor
+            using L{IProcessTransport.writeToChild}.  This is useful for the
+            child's stdin.
 
-                         If childFDs is not passed, the default behaviour is to
-                         use a mapping that opens the usual stdin/stdout/stderr
-                         pipes.
+            If childFDs is not passed, the default behaviour is to use a
+            mapping that opens the usual stdin/stdout/stderr pipes.
+        @type childFDs: L{dict} of L{int} to L{int} or L{str}
 
         @see: L{twisted.internet.protocol.ProcessProtocol}
 
         @return: An object which provides L{IProcessTransport}.
 
         @raise OSError: Raised with errno C{EAGAIN} or C{ENOMEM} if there are
-                        insufficient system resources to create a new process.
+            insufficient system resources to create a new process.
         """
 
 class IReactorTime(Interface):
@@ -1094,9 +1267,9 @@ class IReactorTime(Interface):
         """
         Retrieve all currently scheduled delayed calls.
 
-        @return: A tuple of all L{IDelayedCall} providers representing all
+        @return: A list of L{IDelayedCall} providers representing all
                  currently scheduled calls. This is everything that has been
-                 returned by C{callLater} but not yet called or canceled.
+                 returned by C{callLater} but not yet called or cancelled.
         """
 
 
@@ -1157,7 +1330,49 @@ class IDelayedCall(Interface):
                  called or cancelled.
         """
 
-class IReactorThreads(Interface):
+
+
+class IReactorFromThreads(Interface):
+    """
+    This interface is the set of thread-safe methods which may be invoked on
+    the reactor from other threads.
+
+    @since: 15.4
+    """
+
+    def callFromThread(callable, *args, **kw):
+        """
+        Cause a function to be executed by the reactor thread.
+
+        Use this method when you want to run a function in the reactor's thread
+        from another thread.  Calling L{callFromThread} should wake up the main
+        thread (where L{reactor.run() <IReactorCore.run>} is executing) and run
+        the given callable in that thread.
+
+        If you're writing a multi-threaded application the C{callable} may need
+        to be thread safe, but this method doesn't require it as such.  If you
+        want to call a function in the next mainloop iteration, but you're in
+        the same thread, use L{callLater} with a delay of 0.
+        """
+
+
+class IReactorInThreads(Interface):
+    """
+    This interface contains the methods exposed by a reactor which will let you
+    run functions in another thread.
+
+    @since: 15.4
+    """
+
+    def callInThread(callable, *args, **kwargs):
+        """
+        Run the given callable object in a separate thread, with the given
+        arguments and keyword arguments.
+        """
+
+
+
+class IReactorThreads(IReactorFromThreads, IReactorInThreads):
     """
     Dispatch methods to be run in threads.
 
@@ -1166,40 +1381,19 @@ class IReactorThreads(Interface):
 
     def getThreadPool():
         """
-        Return the threadpool used by L{callInThread}.  Create it first if
-        necessary.
+        Return the threadpool used by L{IReactorInThreads.callInThread}.
+        Create it first if necessary.
 
         @rtype: L{twisted.python.threadpool.ThreadPool}
-        """
-
-
-    def callInThread(callable, *args, **kwargs):
-        """
-        Run the callable object in a separate thread.
-        """
-
-
-    def callFromThread(callable, *args, **kw):
-        """
-        Cause a function to be executed by the reactor thread.
-
-        Use this method when you want to run a function in the reactor's thread
-        from another thread.  Calling L{callFromThread} should wake up the main
-        thread (where L{reactor.run()<reactor.run>} is executing) and run the
-        given callable in that thread.
-
-        If you're writing a multi-threaded application the C{callable} may need
-        to be thread safe, but this method doesn't require it as such. If you
-        want to call a function in the next mainloop iteration, but you're in
-        the same thread, use L{callLater} with a delay of 0.
         """
 
 
     def suggestThreadPoolSize(size):
         """
         Suggest the size of the internal threadpool used to dispatch functions
-        passed to L{callInThread}.
+        passed to L{IReactorInThreads.callInThread}.
         """
+
 
 
 class IReactorCore(Interface):
@@ -1333,9 +1527,14 @@ class IReactorCore(Interface):
         """
 
 
+
 class IReactorPluggableResolver(Interface):
     """
-    A reactor with a pluggable name resolver interface.
+    An L{IReactorPluggableResolver} is a reactor which can be customized with
+    an L{IResolverSimple}.  This is a fairly limited interface, that supports
+    only IPv4; you should use L{IReactorPluggableNameResolver} instead.
+
+    @see: L{IReactorPluggableNameResolver}
     """
 
     def installResolver(resolver):
@@ -1346,7 +1545,35 @@ class IReactorPluggableResolver(Interface):
         @param resolver: The new resolver to use.
 
         @return: The previously installed resolver.
+        @rtype: L{IResolverSimple}
         """
+
+
+
+class IReactorPluggableNameResolver(Interface):
+    """
+    An L{IReactorPluggableNameResolver} is a reactor whose name resolver can be
+    set to a user-supplied object.
+    """
+
+    nameResolver = Attribute(
+        """
+        Read-only attribute; the resolver installed with L{installResolver}.
+        An L{IHostnameResolver}.
+        """
+    )
+
+    def installNameResolver(resolver):
+        """
+        Set the internal resolver to use for name lookups.
+
+        @type resolver: An object providing the L{IHostnameResolver} interface.
+        @param resolver: The new resolver to use.
+
+        @return: The previously installed resolver.
+        @rtype: L{IHostnameResolver}
+        """
+
 
 
 class IReactorDaemonize(Interface):
@@ -1366,7 +1593,7 @@ class IReactorDaemonize(Interface):
         Hook to be called immediately before daemonization. No reactor methods
         may be called until L{afterDaemonize} is called.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
 
@@ -1375,7 +1602,7 @@ class IReactorDaemonize(Interface):
         Hook to be called immediately after daemonization. This may only be
         called after L{beforeDaemonize} had been called previously.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
 
@@ -1396,7 +1623,7 @@ class IReactorFDSet(Interface):
                        read events until it is removed from the reactor with
                        L{removeReader}.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
     def addWriter(writer):
@@ -1407,21 +1634,21 @@ class IReactorFDSet(Interface):
                        write events until it is removed from the reactor with
                        L{removeWriter}.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
     def removeReader(reader):
         """
         Removes an object previously added with L{addReader}.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
     def removeWriter(writer):
         """
         Removes an object previously added with L{addWriter}.
 
-        @return: C{None}.
+        @return: L{None}.
         """
 
     def removeAll():
@@ -1548,7 +1775,7 @@ class IReadDescriptor(IFileDescriptor):
 
         @return: If an error is encountered which causes the descriptor to
             no longer be valid, a L{Failure} should be returned.  Otherwise,
-            C{None}.
+            L{None}.
         """
 
 
@@ -1565,7 +1792,7 @@ class IWriteDescriptor(IFileDescriptor):
 
         @return: If an error is encountered which causes the descriptor to
             no longer be valid, a L{Failure} should be returned.  Otherwise,
-            C{None}.
+            L{None}.
         """
 
 
@@ -1628,7 +1855,9 @@ class IConsumer(Interface):
 
         For L{IPushProducer} providers, C{pauseProducing} will be called
         whenever the write buffer fills up and C{resumeProducing} will only be
-        called when it empties.
+        called when it empties.  The consumer will only call C{resumeProducing}
+        to balance a previous C{pauseProducing} call; the producer is assumed
+        to start in an un-paused state.
 
         @type producer: L{IProducer} provider
 
@@ -1638,7 +1867,7 @@ class IConsumer(Interface):
 
         @raise RuntimeError: If a producer is already registered.
 
-        @return: C{None}
+        @return: L{None}
         """
 
 
@@ -1664,7 +1893,7 @@ class IProducer(Interface):
     """
     A producer produces data for a consumer.
 
-    Typically producing is done by calling the write method of an class
+    Typically producing is done by calling the C{write} method of a class
     implementing L{IConsumer}.
     """
 
@@ -1682,7 +1911,7 @@ class IPushProducer(IProducer):
     A push producer, also known as a streaming producer is expected to
     produce (write to this consumer) data on a continuous basis, unless
     it has been paused. A paused push producer will resume producing
-    after its resumeProducing() method is called.   For a push producer
+    after its C{resumeProducing()} method is called.   For a push producer
     which is not pauseable, these functions may be noops.
     """
 
@@ -1691,7 +1920,7 @@ class IPushProducer(IProducer):
         Pause producing data.
 
         Tells a producer that it has produced too much data to process for
-        the time being, and to stop until resumeProducing() is called.
+        the time being, and to stop until C{resumeProducing()} is called.
         """
     def resumeProducing():
         """
@@ -1701,10 +1930,12 @@ class IPushProducer(IProducer):
         more data for its consumer.
         """
 
+
+
 class IPullProducer(IProducer):
     """
     A pull producer, also known as a non-streaming producer, is
-    expected to produce data each time resumeProducing() is called.
+    expected to produce data each time L{resumeProducing()} is called.
     """
 
     def resumeProducing():
@@ -1713,9 +1944,13 @@ class IPullProducer(IProducer):
 
         This tells a producer to produce data for the consumer once
         (not repeatedly, once only). Typically this will be done
-        by calling the consumer's write() method a single time with
-        produced data.
+        by calling the consumer's C{write} method a single time with
+        produced data. The producer should produce data before returning
+        from C{resumeProducing()}, that is, it should not schedule a deferred
+        write.
         """
+
+
 
 class IProtocol(Interface):
 
@@ -1727,11 +1962,13 @@ class IProtocol(Interface):
         callback will be made upon the receipt of each complete protocol
         message.
 
-        @param data: a string of indeterminate length.  Please keep in mind
-            that you will probably need to buffer some data, as partial
-            (or multiple) protocol messages may be received!  I recommend
-            that unit tests for protocols call through to this method with
-            differing chunk sizes, down to one byte at a time.
+        Please keep in mind that you will probably need to buffer some data
+        as partial (or multiple) protocol messages may be received!  We
+        recommend that unit tests for protocols call through to this method
+        with differing chunk sizes, down to one byte at a time.
+
+        @param data: bytes of indeterminate length
+        @type data: L{bytes}
         """
 
     def connectionLost(reason):
@@ -1784,11 +2021,11 @@ class IProcessProtocol(Interface):
         """
         Called when data arrives from the child process.
 
-        @type childFD: C{int}
+        @type childFD: L{int}
         @param childFD: The file descriptor from which the data was
             received.
 
-        @type data: C{str}
+        @type data: L{bytes}
         @param data: The data read from the child's file descriptor.
         """
 
@@ -1866,6 +2103,33 @@ class IHalfCloseableProtocol(Interface):
 
 
 
+class IHandshakeListener(Interface):
+    """
+    An interface implemented by a L{IProtocol} to indicate that it would like
+    to be notified when TLS handshakes complete when run over a TLS-based
+    transport.
+
+    This interface is only guaranteed to be called when run over a TLS-based
+    transport: non TLS-based transports will not respect this interface.
+    """
+
+    def handshakeCompleted():
+        """
+        Notification of the TLS handshake being completed.
+
+        This notification fires when OpenSSL has completed the TLS handshake.
+        At this point the TLS connection is established, and the protocol can
+        interrogate its transport (usually an L{ISSLTransport}) for details of
+        the TLS connection.
+
+        This notification *also* fires whenever the TLS session is
+        renegotiated. As a result, protocols that have certain minimum security
+        requirements should implement this interface to ensure that they are
+        able to re-evaluate the security of the TLS session if it changes.
+        """
+
+
+
 class IFileDescriptorReceiver(Interface):
     """
     Protocols may implement L{IFileDescriptorReceiver} to receive file
@@ -1880,7 +2144,7 @@ class IFileDescriptorReceiver(Interface):
         @param descriptor: The descriptor which was received.
         @type descriptor: C{int}
 
-        @return: C{None}
+        @return: L{None}
         """
 
 
@@ -1936,15 +2200,21 @@ class ITransport(Interface):
         If possible, make sure that it is all written.  No data will
         ever be lost, although (obviously) the connection may be closed
         before it all gets through.
+
+        @type data: L{bytes}
+        @param data: The data to write.
         """
 
     def writeSequence(data):
         """
-        Write a list of strings to the physical connection.
+        Write an iterable of byte strings to the physical connection.
 
         If possible, make sure that all of the data is written to
         the socket at once, without first copying it all into a
-        single string.
+        single byte string.
+
+        @type data: an iterable of L{bytes}
+        @param data: The data to write.
         """
 
     def loseConnection():
@@ -2066,7 +2336,107 @@ class IUNIXTransport(ITransport):
             socket, a pipe, or anything else POSIX tries to treat in the same
             way as a file.
 
-        @return: C{None}
+        @return: L{None}
+        """
+
+
+
+class IOpenSSLServerConnectionCreator(Interface):
+    """
+    A provider of L{IOpenSSLServerConnectionCreator} can create
+    L{OpenSSL.SSL.Connection} objects for TLS servers.
+
+    @see: L{twisted.internet.ssl}
+
+    @note: Creating OpenSSL connection objects is subtle, error-prone, and
+        security-critical.  Before implementing this interface yourself,
+        consider using L{twisted.internet.ssl.CertificateOptions} as your
+        C{contextFactory}.  (For historical reasons, that class does not
+        actually I{implement} this interface; nevertheless it is usable in all
+        Twisted APIs which require a provider of this interface.)
+    """
+
+    def serverConnectionForTLS(tlsProtocol):
+        """
+        Create a connection for the given server protocol.
+
+        @param tlsProtocol: the protocol server making the request.
+        @type tlsProtocol: L{twisted.protocols.tls.TLSMemoryBIOProtocol}.
+
+        @return: an OpenSSL connection object configured appropriately for the
+            given Twisted protocol.
+        @rtype: L{OpenSSL.SSL.Connection}
+        """
+
+
+
+class IOpenSSLClientConnectionCreator(Interface):
+    """
+    A provider of L{IOpenSSLClientConnectionCreator} can create
+    L{OpenSSL.SSL.Connection} objects for TLS clients.
+
+    @see: L{twisted.internet.ssl}
+
+    @note: Creating OpenSSL connection objects is subtle, error-prone, and
+        security-critical.  Before implementing this interface yourself,
+        consider using L{twisted.internet.ssl.optionsForClientTLS} as your
+        C{contextFactory}.
+    """
+
+    def clientConnectionForTLS(tlsProtocol):
+        """
+        Create a connection for the given client protocol.
+
+        @param tlsProtocol: the client protocol making the request.
+        @type tlsProtocol: L{twisted.protocols.tls.TLSMemoryBIOProtocol}.
+
+        @return: an OpenSSL connection object configured appropriately for the
+            given Twisted protocol.
+        @rtype: L{OpenSSL.SSL.Connection}
+        """
+
+
+
+class IProtocolNegotiationFactory(Interface):
+    """
+    A provider of L{IProtocolNegotiationFactory} can provide information about
+    the various protocols that the factory can create implementations of. This
+    can be used, for example, to provide protocol names for Next Protocol
+    Negotiation and Application Layer Protocol Negotiation.
+
+    @see: L{twisted.internet.ssl}
+    """
+
+    def acceptableProtocols():
+        """
+        Returns a list of protocols that can be spoken by the connection
+        factory in the form of ALPN tokens, as laid out in the IANA registry
+        for ALPN tokens.
+
+        @return: a list of ALPN tokens in order of preference.
+        @rtype: L{list} of L{bytes}
+        """
+
+
+
+class IOpenSSLContextFactory(Interface):
+    """
+    A provider of L{IOpenSSLContextFactory} is capable of generating
+    L{OpenSSL.SSL.Context} classes suitable for configuring TLS on a
+    connection. A provider will store enough state to be able to generate these
+    contexts as needed for individual connections.
+
+    @see: L{twisted.internet.ssl}
+    """
+
+    def getContext():
+        """
+        Returns a TLS context object, suitable for securing a TLS connection.
+        This context object will be appropriately customized for the connection
+        based on the state in this object.
+
+        @return: A TLS context object.
+        @rtype: L{OpenSSL.SSL.Context}
         """
 
 
@@ -2082,8 +2452,20 @@ class ITLSTransport(ITCPTransport):
         """
         Initiate TLS negotiation.
 
-        @param contextFactory: A context factory (see L{ssl.py<twisted.internet.ssl>})
+        @param contextFactory: An object which creates appropriately configured
+            TLS connections.
+
+            For clients, use L{twisted.internet.ssl.optionsForClientTLS}; for
+            servers, use L{twisted.internet.ssl.CertificateOptions}.
+
+        @type contextFactory: L{IOpenSSLClientConnectionCreator} or
+            L{IOpenSSLServerConnectionCreator}, depending on whether this
+            L{ITLSTransport} is a server or not.  If the appropriate interface
+            is not provided by the value given for C{contextFactory}, it must
+            be an implementor of L{IOpenSSLContextFactory}.
         """
+
+
 
 class ISSLTransport(ITCPTransport):
     """
@@ -2094,6 +2476,56 @@ class ISSLTransport(ITCPTransport):
         """
         Return an object with the peer's certificate info.
         """
+
+
+
+class INegotiated(ISSLTransport):
+    """
+    A TLS based transport that supports using ALPN/NPN to negotiate the
+    protocol to be used inside the encrypted tunnel.
+    """
+    negotiatedProtocol = Attribute(
+        """
+        The protocol selected to be spoken using ALPN/NPN. The result from ALPN
+        is preferred to the result from NPN if both were used. If the remote
+        peer does not support ALPN or NPN, or neither NPN or ALPN are available
+        on this machine, will be L{None}. Otherwise, will be the name of the
+        selected protocol as C{bytes}. Note that until the handshake has
+        completed this property may incorrectly return L{None}: wait until data
+        has been received before trusting it (see
+        https://twistedmatrix.com/trac/ticket/6024).
+        """
+    )
+
+
+
+class ICipher(Interface):
+    """
+    A TLS cipher.
+    """
+    fullName = Attribute(
+        "The fully qualified name of the cipher in L{unicode}."
+    )
+
+
+
+class IAcceptableCiphers(Interface):
+    """
+    A list of acceptable ciphers for a TLS context.
+    """
+    def selectCiphers(availableCiphers):
+        """
+        Choose which ciphers to allow to be negotiated on a TLS connection.
+
+        @param availableCiphers: A L{list} of L{ICipher} which gives the names
+            of all ciphers supported by the TLS implementation in use.
+
+        @return: A L{list} of L{ICipher} which represents the ciphers
+            which may be negotiated on the TLS connection.  The result is
+            ordered by preference with more preferred ciphers appearing
+            earlier.
+        """
+
 
 
 class IProcessTransport(ITransport):
@@ -2133,13 +2565,13 @@ class IProcessTransport(ITransport):
         Similar to L{ITransport.write} but also allows the file descriptor in
         the child process which will receive the bytes to be specified.
 
-        @type childFD: C{int}
+        @type childFD: L{int}
         @param childFD: The file descriptor to which to write.
 
-        @type data: C{str}
+        @type data: L{bytes}
         @param data: The bytes to write.
 
-        @return: C{None}
+        @return: L{None}
 
         @raise KeyError: If C{childFD} is not a file descriptor that was mapped
             in the child when L{IReactorProcess.spawnProcess} was used to create
@@ -2225,7 +2657,10 @@ class IUDPTransport(Interface):
 
     def getHost():
         """
-        Returns L{IPv4Address}.
+        Get this port's host address.
+
+        @return: an address describing the listening port.
+        @rtype: L{IPv4Address} or L{IPv6Address}.
         """
 
     def stopListening():
@@ -2236,6 +2671,21 @@ class IUDPTransport(Interface):
         upon completion.
         """
 
+    def setBroadcastAllowed(enabled):
+        """
+        Set whether this port may broadcast.
+
+        @param enabled: Whether the port may broadcast.
+        @type enabled: L{bool}
+        """
+
+    def getBroadcastAllowed():
+        """
+        Checks if broadcast is currently allowed on this port.
+
+        @return: Whether this port may broadcast.
+        @rtype: L{bool}
+        """
 
 
 class IUNIXDatagramTransport(Interface):
@@ -2341,7 +2791,8 @@ class IStreamClientEndpoint(Interface):
 
         @param protocolFactory: A provider of L{IProtocolFactory}
         @return: A L{Deferred} that results in an L{IProtocol} upon successful
-            connection otherwise a L{ConnectError}
+            connection otherwise a L{Failure} wrapping L{ConnectError} or
+            L{NoProtocol <twisted.internet.error.NoProtocol>}.
         """
 
 
@@ -2369,14 +2820,17 @@ class IStreamServerEndpoint(Interface):
 class IStreamServerEndpointStringParser(Interface):
     """
     An L{IStreamServerEndpointStringParser} is like an
-    L{IStreamClientEndpointStringParser}, except for L{IStreamServerEndpoint}s
-    instead of clients.  It integrates with L{endpoints.serverFromString} in
-    much the same way.
+    L{IStreamClientEndpointStringParserWithReactor}, except for
+    L{IStreamServerEndpoint}s instead of clients.  It integrates with
+    L{endpoints.serverFromString} in much the same way.
     """
 
     prefix = Attribute(
         """
-        @see: L{IStreamClientEndpointStringParser.prefix}
+        A C{str}, the description prefix to respond to.  For example, an
+        L{IStreamServerEndpointStringParser} plugin which had C{"foo"} for its
+        C{prefix} attribute would be called for endpoint descriptions like
+        C{"foo:bar:baz"} or C{"foo:"}.
         """
     )
 
@@ -2386,57 +2840,76 @@ class IStreamServerEndpointStringParser(Interface):
         Parse a stream server endpoint from a reactor and string-only arguments
         and keyword arguments.
 
-        @see: L{IStreamClientEndpointStringParser.parseStreamClient}
+        @see: L{IStreamClientEndpointStringParserWithReactor.parseStreamClient}
 
         @return: a stream server endpoint
         @rtype: L{IStreamServerEndpoint}
         """
 
 
-
-class IStreamClientEndpointStringParser(Interface):
+class IStreamClientEndpointStringParserWithReactor(Interface):
     """
-    An L{IStreamClientEndpointStringParser} is a parser which can convert
-    a set of string C{*args} and C{**kwargs} into an L{IStreamClientEndpoint}
-    provider.
+    An L{IStreamClientEndpointStringParserWithReactor} is a parser which can
+    convert a set of string C{*args} and C{**kwargs} into an
+    L{IStreamClientEndpoint} provider.
 
     This interface is really only useful in the context of the plugin system
     for L{endpoints.clientFromString}.  See the document entitled "I{The
     Twisted Plugin System}" for more details on how to write a plugin.
 
-    If you place an L{IStreamClientEndpointStringParser} plugin in the
-    C{twisted.plugins} package, that plugin's C{parseStreamClient} method will
-    be used to produce endpoints for any description string that begins with
-    the result of that L{IStreamClientEndpointStringParser}'s prefix attribute.
+    If you place an L{IStreamClientEndpointStringParserWithReactor} plugin in
+    the C{twisted.plugins} package, that plugin's C{parseStreamClient} method
+    will be used to produce endpoints for any description string that begins
+    with the result of that L{IStreamClientEndpointStringParserWithReactor}'s
+    prefix attribute.
     """
 
     prefix = Attribute(
         """
-        A C{str}, the description prefix to respond to.  For example, an
-        L{IStreamClientEndpointStringParser} plugin which had C{"foo"} for its
-        C{prefix} attribute would be called for endpoint descriptions like
-        C{"foo:bar:baz"} or C{"foo:"}.
+        L{bytes}, the description prefix to respond to.  For example, an
+        L{IStreamClientEndpointStringParserWithReactor} plugin which had
+        C{b"foo"} for its C{prefix} attribute would be called for endpoint
+        descriptions like C{b"foo:bar:baz"} or C{b"foo:"}.
         """
     )
 
 
-    def parseStreamClient(*args, **kwargs):
+    def parseStreamClient(reactor, *args, **kwargs):
         """
         This method is invoked by L{endpoints.clientFromString}, if the type of
         endpoint matches the return value from this
-        L{IStreamClientEndpointStringParser}'s C{prefix} method.
+        L{IStreamClientEndpointStringParserWithReactor}'s C{prefix} method.
 
-        @param args: The string arguments, minus the endpoint type, in the
+        @param reactor: The reactor passed to L{endpoints.clientFromString}.
+
+        @param args: The byte string arguments, minus the endpoint type, in the
             endpoint description string, parsed according to the rules
             described in L{endpoints.quoteStringArgument}.  For example, if the
-            description were C{"my-type:foo:bar:baz=qux"}, C{args} would be
-            C{('foo','bar')}
+            description were C{b"my-type:foo:bar:baz=qux"}, C{args} would be
+            C{(b'foo', b'bar')}
 
-        @param kwargs: The string arguments from the endpoint description
+        @param kwargs: The byte string arguments from the endpoint description
             passed as keyword arguments.  For example, if the description were
-            C{"my-type:foo:bar:baz=qux"}, C{kwargs} would be
-            C{dict(baz='qux')}.
+            C{b"my-type:foo:bar:baz=qux"}, C{kwargs} would be
+            C{dict(baz=b'qux')}.
 
         @return: a client endpoint
-        @rtype: L{IStreamClientEndpoint}
+        @rtype: a provider of L{IStreamClientEndpoint}
         """
+
+
+
+class _ISupportsExitSignalCapturing(Interface):
+    """
+    An implementor of L{_ISupportsExitSignalCapturing} will capture the
+    value of any delivered exit signal (SIGINT, SIGTERM, SIGBREAK) for which
+    it has installed a handler.  The caught signal number is made available in
+    the _exitSignal attribute.
+    """
+
+    _exitSignal = Attribute(
+        """
+        C{int} or C{None}, the integer exit signal delivered to the
+        application, or None if no signal was delivered.
+        """
+    )

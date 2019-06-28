@@ -20,13 +20,21 @@ import os
 import errno
 import warnings
 
+from zope.interface import moduleProvides
+
 # Twisted imports
 from twisted.python.compat import nativeString
 from twisted.python.runtime import platform
 from twisted.python.filepath import FilePath
-from twisted.internet import error, defer, protocol
+from twisted.internet import error, defer, interfaces, protocol
 from twisted.python import log, failure
-from twisted.names import dns, common
+from twisted.names import (
+    dns, common, resolve, cache, root, hosts as hostsModule)
+from twisted.internet.abstract import isIPv6Address
+
+
+
+moduleProvides(interfaces.IResolver)
 
 
 
@@ -65,7 +73,7 @@ class Resolver(common.ResolverBase):
         round-robin fashion.  If given, C{resolv} is periodically checked
         for modification and re-parsed if it is noticed to have changed.
 
-        @type servers: C{list} of C{(str, int)} or C{None}
+        @type servers: C{list} of C{(str, int)} or L{None}
         @param servers: If not None, interpreted as a list of (host, port)
             pairs specifying addresses of domain name servers to attempt to use
             for this lookup.  Host addresses should be in IPv4 dotted-quad
@@ -150,12 +158,12 @@ class Resolver(common.ResolverBase):
             else:
                 raise
         else:
-            mtime = os.fstat(resolvConf.fileno()).st_mtime
-            if mtime != self._lastResolvTime:
-                log.msg('%s changed, reparsing' % (self.resolv,))
-                self._lastResolvTime = mtime
-                self.parseConfig(resolvConf)
-            resolvConf.close()
+            with resolvConf:
+                mtime = os.fstat(resolvConf.fileno()).st_mtime
+                if mtime != self._lastResolvTime:
+                    log.msg('%s changed, reparsing' % (self.resolv,))
+                    self._lastResolvTime = mtime
+                    self.parseConfig(resolvConf)
 
         # Check again in a little while
         self._parseCall = self._reactor.callLater(
@@ -204,15 +212,16 @@ class Resolver(common.ResolverBase):
             return self.dynServers[self.index - serverL]
 
 
-    def _connectedProtocol(self):
+    def _connectedProtocol(self, interface=''):
         """
         Return a new L{DNSDatagramProtocol} bound to a randomly selected port
         number.
         """
-        proto = dns.DNSDatagramProtocol(self)
+        proto = dns.DNSDatagramProtocol(self, reactor=self._reactor)
         while True:
             try:
-                self._reactor.listenUDP(dns.randomSource(), proto)
+                self._reactor.listenUDP(dns.randomSource(), proto,
+                                        interface=interface)
             except error.CannotListenError:
                 pass
             else:
@@ -253,7 +262,10 @@ class Resolver(common.ResolverBase):
         @return: A L{Deferred} which will be called back with the result of the
             query.
         """
-        protocol = self._connectedProtocol()
+        if isIPv6Address(args[0][0]):
+            protocol = self._connectedProtocol(interface='::')
+        else:
+            protocol = self._connectedProtocol()
         d = protocol.query(*args)
         def cbQueried(result):
             protocol.transport.stopListening()
@@ -355,8 +367,8 @@ class Resolver(common.ResolverBase):
         If the message was truncated, re-attempt the query over TCP and return
         a Deferred which will fire with the results of that query.
 
-        If the message's result code is not L{dns.OK}, return a Failure
-        indicating the type of error which occurred.
+        If the message's result code is not C{twisted.names.dns.OK}, return a
+        Failure indicating the type of error which occurred.
 
         Otherwise, return a three-tuple of lists containing the results from
         the answers section, the authority section, and the additional section.
@@ -416,7 +428,14 @@ class Resolver(common.ResolverBase):
         controller.timeoutCall = self._reactor.callLater(
             timeout or 10, self._timeoutZone, d, controller,
             connector, timeout or 10)
-        return d.addCallback(self._cbLookupZone, connector)
+
+        def eliminateTimeout(failure):
+            controller.timeoutCall.cancel()
+            controller.timeoutCall = None
+            return failure
+
+        return d.addCallbacks(self._cbLookupZone, eliminateTimeout,
+                              callbackArgs=(connector,))
 
 
     def _timeoutZone(self, d, controller, connector, seconds):
@@ -440,6 +459,7 @@ class AXFRController:
         self.deferred = deferred
         self.soa = None
         self.records = []
+        self.pending = [(deferred,)]
 
 
     def connectionMade(self, protocol):
@@ -492,6 +512,8 @@ class ThreadedResolver(_ThreadedResolverImpl):
             "instead.",
             category=DeprecationWarning, stacklevel=2)
 
+
+
 class DNSClientFactory(protocol.ClientFactory):
     def __init__(self, controller, timeout = 10):
         self.controller = controller
@@ -500,6 +522,33 @@ class DNSClientFactory(protocol.ClientFactory):
 
     def clientConnectionLost(self, connector, reason):
         pass
+
+
+    def clientConnectionFailed(self, connector, reason):
+        """
+        Fail all pending TCP DNS queries if the TCP connection attempt
+        fails.
+
+        @see: L{twisted.internet.protocol.ClientFactory}
+
+        @param connector: Not used.
+        @type connector: L{twisted.internet.interfaces.IConnector}
+
+        @param reason: A C{Failure} containing information about the
+            cause of the connection failure. This will be passed as the
+            argument to C{errback} on every pending TCP query
+            C{deferred}.
+        @type reason: L{twisted.python.failure.Failure}
+        """
+        # Copy the current pending deferreds then reset the master
+        # pending list. This prevents triggering new deferreds which
+        # may be added by callback or errback functions on the current
+        # deferreds.
+        pending = self.controller.pending[:]
+        del self.controller.pending[:]
+        for pendingState in pending:
+            d = pendingState[0]
+            d.errback(reason)
 
 
     def buildProtocol(self, addr):
@@ -513,25 +562,24 @@ def createResolver(servers=None, resolvconf=None, hosts=None):
     """
     Create and return a Resolver.
 
-    @type servers: C{list} of C{(str, int)} or C{None}
+    @type servers: C{list} of C{(str, int)} or L{None}
 
-    @param servers: If not C{None}, interpreted as a list of domain name servers
+    @param servers: If not L{None}, interpreted as a list of domain name servers
     to attempt to use. Each server is a tuple of address in C{str} dotted-quad
     form and C{int} port number.
 
-    @type resolvconf: C{str} or C{None}
-    @param resolvconf: If not C{None}, on posix systems will be interpreted as
+    @type resolvconf: C{str} or L{None}
+    @param resolvconf: If not L{None}, on posix systems will be interpreted as
     an alternate resolv.conf to use. Will do nothing on windows systems. If
-    C{None}, /etc/resolv.conf will be used.
+    L{None}, /etc/resolv.conf will be used.
 
-    @type hosts: C{str} or C{None}
-    @param hosts: If not C{None}, an alternate hosts file to use. If C{None}
+    @type hosts: C{str} or L{None}
+    @param hosts: If not L{None}, an alternate hosts file to use. If L{None}
     on posix systems, /etc/hosts will be used. On windows, C:\windows\hosts
     will be used.
 
     @rtype: C{IResolver}
     """
-    from twisted.names import resolve, cache, root, hosts as hostsModule
     if platform.getType() == 'posix':
         if resolvconf is None:
             resolvconf = b'/etc/resolv.conf'
@@ -545,7 +593,7 @@ def createResolver(servers=None, resolvconf=None, hosts=None):
         from twisted.internet import reactor
         bootstrap = _ThreadedResolverImpl(reactor)
         hostResolver = hostsModule.Resolver(hosts)
-        theResolver = root.bootstrap(bootstrap)
+        theResolver = root.bootstrap(bootstrap, resolverFactory=Resolver)
 
     L = [hostResolver, cache.CacheResolver(), theResolver]
     return resolve.ResolverChain(L)
@@ -557,7 +605,7 @@ def getResolver():
     """
     Get a Resolver instance.
 
-    Create twisted.names.client.theResolver if it is C{None}, and then return
+    Create twisted.names.client.theResolver if it is L{None}, and then return
     that value.
 
     @rtype: C{IResolver}
@@ -596,184 +644,120 @@ def getHostByName(name, timeout=None, effort=10):
 
 
 
+def query(query, timeout=None):
+    return getResolver().query(query, timeout)
+
+
+
 def lookupAddress(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupAddress}
-    """
     return getResolver().lookupAddress(name, timeout)
 
 
 
 def lookupIPV6Address(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupIPV6Address}
-    """
     return getResolver().lookupIPV6Address(name, timeout)
 
 
 
 def lookupAddress6(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupAddress6}
-    """
     return getResolver().lookupAddress6(name, timeout)
 
 
 
 def lookupMailExchange(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupMailExchange}
-    """
     return getResolver().lookupMailExchange(name, timeout)
 
 
 
 def lookupNameservers(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupNameservers}
-    """
     return getResolver().lookupNameservers(name, timeout)
 
 
 
 def lookupCanonicalName(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupCanonicalName}
-    """
     return getResolver().lookupCanonicalName(name, timeout)
 
 
 
 def lookupMailBox(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupMailBox}
-    """
     return getResolver().lookupMailBox(name, timeout)
 
 
 
 def lookupMailGroup(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupMailGroup}
-    """
     return getResolver().lookupMailGroup(name, timeout)
 
 
 
 def lookupMailRename(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupMailRename}
-    """
     return getResolver().lookupMailRename(name, timeout)
 
 
 
 def lookupPointer(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupPointer}
-    """
     return getResolver().lookupPointer(name, timeout)
 
 
 
 def lookupAuthority(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupAuthority}
-    """
     return getResolver().lookupAuthority(name, timeout)
 
 
 
 def lookupNull(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupNull}
-    """
     return getResolver().lookupNull(name, timeout)
 
 
 
 def lookupWellKnownServices(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupWellKnownServices}
-    """
     return getResolver().lookupWellKnownServices(name, timeout)
 
 
 
 def lookupService(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupService}
-    """
     return getResolver().lookupService(name, timeout)
 
 
 
 def lookupHostInfo(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupHostInfo}
-    """
     return getResolver().lookupHostInfo(name, timeout)
 
 
 
 def lookupMailboxInfo(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupMailboxInfo}
-    """
     return getResolver().lookupMailboxInfo(name, timeout)
 
 
 
 def lookupText(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupText}
-    """
     return getResolver().lookupText(name, timeout)
 
 
 
 def lookupSenderPolicy(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupSenderPolicy}
-    """
     return getResolver().lookupSenderPolicy(name, timeout)
 
 
 
 def lookupResponsibility(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupResponsibility}
-    """
     return getResolver().lookupResponsibility(name, timeout)
 
 
 
 def lookupAFSDatabase(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupAFSDatabase}
-    """
     return getResolver().lookupAFSDatabase(name, timeout)
 
 
 
 def lookupZone(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupZone}
-    """
     return getResolver().lookupZone(name, timeout)
 
 
 
 def lookupAllRecords(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupAllRecords}
-    """
     return getResolver().lookupAllRecords(name, timeout)
 
 
 
 def lookupNamingAuthorityPointer(name, timeout=None):
-    """
-    @see: L{twisted.internet.interfaces.IResolver.lookupNamingAuthorityPointer}
-    """
     return getResolver().lookupNamingAuthorityPointer(name, timeout)

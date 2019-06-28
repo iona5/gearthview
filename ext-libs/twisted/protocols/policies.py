@@ -11,7 +11,7 @@ Resource limiting policies.
 from __future__ import division, absolute_import
 
 # system imports
-import sys, operator
+import sys
 
 from zope.interface import directlyProvides, providedBy
 
@@ -124,6 +124,8 @@ class ProtocolWrapper(Protocol):
         self.factory.unregisterProtocol(self)
         self.wrappedProtocol.connectionLost(reason)
 
+        # Breaking reference cycle between self and wrappedProtocol.
+        self.wrappedProtocol = None
 
 
 class WrappingFactory(ClientFactory):
@@ -187,7 +189,9 @@ class WrappingFactory(ClientFactory):
 
 
 class ThrottlingProtocol(ProtocolWrapper):
-    """Protocol for ThrottlingFactory."""
+    """
+    Protocol for L{ThrottlingFactory}.
+    """
 
     # wrap API for tracking bandwidth
 
@@ -195,17 +199,21 @@ class ThrottlingProtocol(ProtocolWrapper):
         self.factory.registerWritten(len(data))
         ProtocolWrapper.write(self, data)
 
+
     def writeSequence(self, seq):
-        self.factory.registerWritten(reduce(operator.add, map(len, seq)))
+        self.factory.registerWritten(sum(map(len, seq)))
         ProtocolWrapper.writeSequence(self, seq)
+
 
     def dataReceived(self, data):
         self.factory.registerRead(len(data))
         ProtocolWrapper.dataReceived(self, data)
 
+
     def registerProducer(self, producer, streaming):
         self.producer = producer
         ProtocolWrapper.registerProducer(self, producer, streaming)
+
 
     def unregisterProducer(self):
         del self.producer
@@ -215,16 +223,20 @@ class ThrottlingProtocol(ProtocolWrapper):
     def throttleReads(self):
         self.transport.pauseProducing()
 
+
     def unthrottleReads(self):
         self.transport.resumeProducing()
+
 
     def throttleWrites(self):
         if hasattr(self, "producer"):
             self.producer.pauseProducing()
 
+
     def unthrottleWrites(self):
         if hasattr(self, "producer"):
             self.producer.resumeProducing()
+
 
 
 class ThrottlingFactory(WrappingFactory):
@@ -254,7 +266,9 @@ class ThrottlingFactory(WrappingFactory):
 
     def callLater(self, period, func):
         """
-        Wrapper around L{reactor.callLater} for test purpose.
+        Wrapper around
+        L{reactor.callLater<twisted.internet.interfaces.IReactorTime.callLater>}
+        for test purpose.
         """
         from twisted.internet import reactor
         return reactor.callLater(period, func)
@@ -410,11 +424,11 @@ class LimitTotalConnectionsFactory(ServerFactory):
 
     @type connectionCount: C{int}
     @ivar connectionCount: number of current connections.
-    @type connectionLimit: C{int} or C{None}
+    @type connectionLimit: C{int} or L{None}
     @cvar connectionLimit: maximum number of connections.
-    @type overflowProtocol: L{Protocol} or C{None}
+    @type overflowProtocol: L{Protocol} or L{None}
     @cvar overflowProtocol: Protocol to use for new connections when
-        connectionLimit is exceeded.  If C{None} (the default value), excess
+        connectionLimit is exceeded.  If L{None} (the default value), excess
         connections will be closed immediately.
     """
     connectionCount = 0
@@ -455,13 +469,14 @@ class TimeoutProtocol(ProtocolWrapper):
         """
         Constructor.
 
-        @param factory: An L{IFactory}.
+        @param factory: An L{TimeoutFactory}.
         @param wrappedProtocol: A L{Protocol} to wrapp.
         @param timeoutPeriod: Number of seconds to wait for activity before
             timing out.
         """
         ProtocolWrapper.__init__(self, factory, wrappedProtocol)
         self.timeoutCall = None
+        self.timeoutPeriod = None
         self.setTimeout(timeoutPeriod)
 
 
@@ -471,13 +486,13 @@ class TimeoutProtocol(ProtocolWrapper):
 
         This will cancel any existing timeouts.
 
-        @param timeoutPeriod: If not C{None}, change the timeout period.
+        @param timeoutPeriod: If not L{None}, change the timeout period.
             Otherwise, use the existing value.
         """
         self.cancelTimeout()
+        self.timeoutPeriod = timeoutPeriod
         if timeoutPeriod is not None:
-            self.timeoutPeriod = timeoutPeriod
-        self.timeoutCall = self.factory.callLater(self.timeoutPeriod, self.timeoutFunc)
+            self.timeoutCall = self.factory.callLater(self.timeoutPeriod, self.timeoutFunc)
 
 
     def cancelTimeout(self):
@@ -486,10 +501,11 @@ class TimeoutProtocol(ProtocolWrapper):
 
         If the timeout was already cancelled, this does nothing.
         """
+        self.timeoutPeriod = None
         if self.timeoutCall:
             try:
                 self.timeoutCall.cancel()
-            except error.AlreadyCalled:
+            except (error.AlreadyCalled, error.AlreadyCancelled):
                 pass
             self.timeoutCall = None
 
@@ -526,7 +542,7 @@ class TimeoutProtocol(ProtocolWrapper):
         """
         This method is called when the timeout is triggered.
 
-        By default it calls L{loseConnection}.  Override this if you want
+        By default it calls I{loseConnection}.  Override this if you want
         something else to happen.
         """
         self.loseConnection()
@@ -552,7 +568,9 @@ class TimeoutFactory(WrappingFactory):
 
     def callLater(self, period, func):
         """
-        Wrapper around L{reactor.callLater} for test purpose.
+        Wrapper around
+        L{reactor.callLater<twisted.internet.interfaces.IReactorTime.callLater>}
+        for test purpose.
         """
         from twisted.internet import reactor
         return reactor.callLater(period, func)
@@ -565,7 +583,7 @@ class TrafficLoggingProtocol(ProtocolWrapper):
                  number=0):
         """
         @param factory: factory which created this protocol.
-        @type factory: C{protocol.Factory}.
+        @type factory: L{protocol.Factory}.
         @param wrappedProtocol: the underlying protocol.
         @type wrappedProtocol: C{protocol.Protocol}.
         @param logfile: file opened for writing used to write log messages.
@@ -637,7 +655,7 @@ class TrafficLoggingFactory(WrappingFactory):
 
 
     def open(self, name):
-        return file(name, 'w')
+        return open(name, 'w')
 
 
     def buildProtocol(self, addr):
@@ -671,7 +689,9 @@ class TimeoutMixin:
 
     def callLater(self, period, func):
         """
-        Wrapper around L{reactor.callLater} for test purpose.
+        Wrapper around
+        L{reactor.callLater<twisted.internet.interfaces.IReactorTime.callLater>}
+        for test purpose.
         """
         from twisted.internet import reactor
         return reactor.callLater(period, func)
@@ -696,16 +716,20 @@ class TimeoutMixin:
         """
         Change the timeout period
 
-        @type period: C{int} or C{NoneType}
+        @type period: C{int} or L{None}
         @param period: The period, in seconds, to change the timeout to, or
-        C{None} to disable the timeout.
+        L{None} to disable the timeout.
         """
         prev = self.timeOut
         self.timeOut = period
 
         if self.__timeoutCall is not None:
             if period is None:
-                self.__timeoutCall.cancel()
+                try:
+                    self.__timeoutCall.cancel()
+                except (error.AlreadyCancelled, error.AlreadyCalled):
+                    # Do nothing if the call was already consumed.
+                    pass
                 self.__timeoutCall = None
             else:
                 self.__timeoutCall.reset(period)

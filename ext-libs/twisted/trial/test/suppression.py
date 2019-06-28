@@ -3,7 +3,7 @@
 # See LICENSE for details.
 
 """
-Test cases used to make sure that warning supression works at the module,
+Test cases used to make sure that warning suppression works at the module,
 method, and class levels.
 
 See the L{twisted.trial.test.test_tests} module docstring for details about how
@@ -14,7 +14,6 @@ from __future__ import division, absolute_import
 
 import warnings
 
-from twisted.python.compat import _PY3
 from twisted.trial import unittest, util
 
 
@@ -32,7 +31,13 @@ class ClassWarning(Warning):
 class ModuleWarning(Warning):
     pass
 
-class EmitMixin:
+
+
+class EmitMixin(object):
+    """
+    Mixin for emiting a variety of warnings.
+    """
+
     def _emit(self):
         warnings.warn(METHOD_WARNING_MSG, MethodWarning)
         warnings.warn(CLASS_WARNING_MSG, ClassWarning)

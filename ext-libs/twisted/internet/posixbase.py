@@ -15,19 +15,16 @@ import sys
 
 from zope.interface import implementer, classImplements
 
-from twisted.python.compat import _PY3
-from twisted.internet.interfaces import IReactorUNIX, IReactorUNIXDatagram
-from twisted.internet.interfaces import (
-    IReactorTCP, IReactorUDP, IReactorSSL, IReactorSocket)
-from twisted.internet.interfaces import IReactorProcess, IReactorMulticast
-from twisted.internet.interfaces import IHalfCloseableDescriptor
 from twisted.internet import error, udp, tcp
+from twisted.internet.base import ReactorBase, _SignalReactorMixin
+from twisted.internet.main import CONNECTION_DONE, CONNECTION_LOST
+from twisted.internet.interfaces import (
+    IReactorUNIX, IReactorUNIXDatagram, IReactorTCP, IReactorUDP, IReactorSSL,
+    IReactorSocket, IHalfCloseableDescriptor, IReactorProcess,
+    IReactorMulticast, IReactorFDSet)
 
 from twisted.python import log, failure, util
 from twisted.python.runtime import platformType, platform
-
-from twisted.internet.base import ReactorBase, _SignalReactorMixin
-from twisted.internet.main import CONNECTION_DONE, CONNECTION_LOST
 
 # Exceptions that doSelect might return frequently
 _NO_FILENO = error.ConnectionFdescWentAway('Handler has no fileno method')
@@ -47,11 +44,9 @@ unixEnabled = (platformType == 'posix')
 
 processEnabled = False
 if unixEnabled:
-    from twisted.internet import fdesc
-    # Enable on Python 3 in ticket #5987:
-    if not _PY3:
-        from twisted.internet import process, _signals
-        processEnabled = True
+    from twisted.internet import fdesc, unix
+    from twisted.internet import process, _signals
+    processEnabled = True
 
 
 if platform.isWindows():
@@ -121,7 +116,7 @@ class _FDWaker(log.Logger, object):
     writing to a pipe being monitored by the reactor.
 
     @ivar o: The file descriptor for the end of the pipe which can be
-        written to to wake up a reactor monitoring this waker.
+        written to wake up a reactor monitoring this waker.
 
     @ivar i: The file descriptor which should be monitored in order to
         be awoken by this waker.
@@ -270,7 +265,7 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
     """
     A basis for reactors that use file descriptors.
 
-    @ivar _childWaker: C{None} or a reference to the L{_SIGCHLDWaker}
+    @ivar _childWaker: L{None} or a reference to the L{_SIGCHLDWaker}
         which is used to properly notice child process termination.
     """
 
@@ -391,24 +386,13 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
     # IReactorUNIX
 
     def connectUNIX(self, address, factory, timeout=30, checkPID=0):
-        """@see: twisted.internet.interfaces.IReactorUNIX.connectUNIX
-        """
         assert unixEnabled, "UNIX support is not present"
-        # Move this import back up to main level when twisted.internet.unix is
-        # ported to Python 3:
-        from twisted.internet import unix
         c = unix.Connector(address, factory, timeout, self, checkPID)
         c.connect()
         return c
 
     def listenUNIX(self, address, factory, backlog=50, mode=0o666, wantPID=0):
-        """
-        @see: twisted.internet.interfaces.IReactorUNIX.listenUNIX
-        """
         assert unixEnabled, "UNIX support is not present"
-        # Move this import back up to main level when twisted.internet.unix is
-        # ported to Python 3:
-        from twisted.internet import unix
         p = unix.Port(address, factory, backlog, mode, self, wantPID)
         p.startListening()
         return p
@@ -426,9 +410,6 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
         @returns: object conforming to L{IListeningPort}.
         """
         assert unixEnabled, "UNIX support is not present"
-        # Move this import back up to main level when twisted.internet.unix is
-        # ported to Python 3:
-        from twisted.internet import unix
         p = unix.DatagramPort(address, protocol, maxPacketSize, mode, self)
         p.startListening()
         return p
@@ -441,15 +422,21 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
         EXPERIMENTAL.
         """
         assert unixEnabled, "UNIX support is not present"
-        # Move this import back up to main level when twisted.internet.unix is
-        # ported to Python 3:
-        from twisted.internet import unix
         p = unix.ConnectedDatagramPort(address, protocol, maxPacketSize, mode, bindAddress, self)
         p.startListening()
         return p
 
 
-    # IReactorSocket (but not on Windows)
+    # IReactorSocket (no AF_UNIX on Windows)
+
+    if unixEnabled:
+        _supportedAddressFamilies = (
+            socket.AF_INET, socket.AF_INET6, socket.AF_UNIX,
+        )
+    else:
+        _supportedAddressFamilies = (
+            socket.AF_INET, socket.AF_INET6,
+        )
 
     def adoptStreamPort(self, fileDescriptor, addressFamily, factory):
         """
@@ -460,11 +447,15 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
 
         @see: L{twisted.internet.interfaces.IReactorSocket.adoptStreamPort}
         """
-        if addressFamily not in (socket.AF_INET, socket.AF_INET6):
+        if addressFamily not in self._supportedAddressFamilies:
             raise error.UnsupportedAddressFamily(addressFamily)
 
-        p = tcp.Port._fromListeningDescriptor(
-            self, fileDescriptor, addressFamily, factory)
+        if unixEnabled and addressFamily == socket.AF_UNIX:
+            p = unix.Port._fromListeningDescriptor(
+                self, fileDescriptor, factory)
+        else:
+            p = tcp.Port._fromListeningDescriptor(
+                self, fileDescriptor, addressFamily, factory)
         p.startListening()
         return p
 
@@ -473,25 +464,38 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
         @see:
             L{twisted.internet.interfaces.IReactorSocket.adoptStreamConnection}
         """
+        if addressFamily not in self._supportedAddressFamilies:
+            raise error.UnsupportedAddressFamily(addressFamily)
+
+        if unixEnabled and addressFamily == socket.AF_UNIX:
+            return unix.Server._fromConnectedSocket(
+                fileDescriptor, factory, self)
+        else:
+            return tcp.Server._fromConnectedSocket(
+                fileDescriptor, addressFamily, factory, self)
+
+
+    def adoptDatagramPort(self, fileDescriptor, addressFamily, protocol,
+                          maxPacketSize=8192):
         if addressFamily not in (socket.AF_INET, socket.AF_INET6):
             raise error.UnsupportedAddressFamily(addressFamily)
 
-        return tcp.Server._fromConnectedSocket(
-            fileDescriptor, addressFamily, factory, self)
+        p = udp.Port._fromListeningDescriptor(
+            self, fileDescriptor, addressFamily, protocol,
+            maxPacketSize=maxPacketSize)
+        p.startListening()
+        return p
+
 
 
     # IReactorTCP
 
     def listenTCP(self, port, factory, backlog=50, interface=''):
-        """@see: twisted.internet.interfaces.IReactorTCP.listenTCP
-        """
         p = tcp.Port(port, factory, backlog, interface, self)
         p.startListening()
         return p
 
     def connectTCP(self, host, port, factory, timeout=30, bindAddress=None):
-        """@see: twisted.internet.interfaces.IReactorTCP.connectTCP
-        """
         c = tcp.Connector(host, port, factory, timeout, bindAddress, self)
         c.connect()
         return c
@@ -499,8 +503,6 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
     # IReactorSSL (sometimes, not implemented)
 
     def connectSSL(self, host, port, factory, contextFactory, timeout=30, bindAddress=None):
-        """@see: twisted.internet.interfaces.IReactorSSL.connectSSL
-        """
         if tls is not None:
             tlsFactory = tls.TLSMemoryBIOFactory(contextFactory, True, factory)
             return self.connectTCP(host, port, tlsFactory, timeout, bindAddress)
@@ -515,8 +517,6 @@ class PosixReactorBase(_SignalReactorMixin, _DisconnectSelectableMixin,
 
 
     def listenSSL(self, port, factory, contextFactory, backlog=50, interface=''):
-        """@see: twisted.internet.interfaces.IReactorSSL.listenSSL
-        """
         if tls is not None:
             tlsFactory = tls.TLSMemoryBIOFactory(contextFactory, False, factory)
             port = self.listenTCP(port, tlsFactory, backlog, interface)
@@ -594,7 +594,7 @@ class _PollLikeMixin(object):
             # Any non-disconnect event turns into a doRead or a doWrite.
             try:
                 # First check to see if the descriptor is still valid.  This
-                # gives fileno() a chance to raise an exception, too. 
+                # gives fileno() a chance to raise an exception, too.
                 # Ideally, disconnection would always be indicated by the
                 # return value of doRead or doWrite (or an exception from
                 # one of those methods), but calling fileno here helps make
@@ -625,6 +625,164 @@ class _PollLikeMixin(object):
                 log.err()
         if why:
             self._disconnectSelectable(selectable, why, inRead)
+
+
+
+@implementer(IReactorFDSet)
+class _ContinuousPolling(_PollLikeMixin, _DisconnectSelectableMixin):
+    """
+    Schedule reads and writes based on the passage of time, rather than
+    notification.
+
+    This is useful for supporting polling filesystem files, which C{epoll(7)}
+    does not support.
+
+    The implementation uses L{_PollLikeMixin}, which is a bit hacky, but
+    re-implementing and testing the relevant code yet again is unappealing.
+
+    @ivar _reactor: The L{EPollReactor} that is using this instance.
+
+    @ivar _loop: A C{LoopingCall} that drives the polling, or L{None}.
+
+    @ivar _readers: A C{set} of C{FileDescriptor} objects that should be read
+        from.
+
+    @ivar _writers: A C{set} of C{FileDescriptor} objects that should be
+        written to.
+    """
+
+    # Attributes for _PollLikeMixin
+    _POLL_DISCONNECTED = 1
+    _POLL_IN = 2
+    _POLL_OUT = 4
+
+
+    def __init__(self, reactor):
+        self._reactor = reactor
+        self._loop = None
+        self._readers = set()
+        self._writers = set()
+
+
+    def _checkLoop(self):
+        """
+        Start or stop a C{LoopingCall} based on whether there are readers and
+        writers.
+        """
+        if self._readers or self._writers:
+            if self._loop is None:
+                from twisted.internet.task import LoopingCall, _EPSILON
+                self._loop = LoopingCall(self.iterate)
+                self._loop.clock = self._reactor
+                # LoopingCall seems unhappy with timeout of 0, so use very
+                # small number:
+                self._loop.start(_EPSILON, now=False)
+        elif self._loop:
+            self._loop.stop()
+            self._loop = None
+
+
+    def iterate(self):
+        """
+        Call C{doRead} and C{doWrite} on all readers and writers respectively.
+        """
+        for reader in list(self._readers):
+            self._doReadOrWrite(reader, reader, self._POLL_IN)
+        for writer in list(self._writers):
+            self._doReadOrWrite(writer, writer, self._POLL_OUT)
+
+
+    def addReader(self, reader):
+        """
+        Add a C{FileDescriptor} for notification of data available to read.
+        """
+        self._readers.add(reader)
+        self._checkLoop()
+
+
+    def addWriter(self, writer):
+        """
+        Add a C{FileDescriptor} for notification of data available to write.
+        """
+        self._writers.add(writer)
+        self._checkLoop()
+
+
+    def removeReader(self, reader):
+        """
+        Remove a C{FileDescriptor} from notification of data available to read.
+        """
+        try:
+            self._readers.remove(reader)
+        except KeyError:
+            return
+        self._checkLoop()
+
+
+    def removeWriter(self, writer):
+        """
+        Remove a C{FileDescriptor} from notification of data available to
+        write.
+        """
+        try:
+            self._writers.remove(writer)
+        except KeyError:
+            return
+        self._checkLoop()
+
+
+    def removeAll(self):
+        """
+        Remove all readers and writers.
+        """
+        result = list(self._readers | self._writers)
+        # Don't reset to new value, since self.isWriting and .isReading refer
+        # to the existing instance:
+        self._readers.clear()
+        self._writers.clear()
+        return result
+
+
+    def getReaders(self):
+        """
+        Return a list of the readers.
+        """
+        return list(self._readers)
+
+
+    def getWriters(self):
+        """
+        Return a list of the writers.
+        """
+        return list(self._writers)
+
+
+    def isReading(self, fd):
+        """
+        Checks if the file descriptor is currently being observed for read
+        readiness.
+
+        @param fd: The file descriptor being checked.
+        @type fd: L{twisted.internet.abstract.FileDescriptor}
+        @return: C{True} if the file descriptor is being observed for read
+            readiness, C{False} otherwise.
+        @rtype: C{bool}
+        """
+        return fd in self._readers
+
+
+    def isWriting(self, fd):
+        """
+        Checks if the file descriptor is currently being observed for write
+        readiness.
+
+        @param fd: The file descriptor being checked.
+        @type fd: L{twisted.internet.abstract.FileDescriptor}
+        @return: C{True} if the file descriptor is being observed for write
+            readiness, C{False} otherwise.
+        @rtype: C{bool}
+        """
+        return fd in self._writers
 
 
 

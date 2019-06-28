@@ -6,7 +6,6 @@ Tests for L{twisted.python.win32}.
 """
 
 from twisted.trial import unittest
-from twisted.python.runtime import platform
 from twisted.python import win32
 
 
@@ -37,34 +36,3 @@ class CommandLineQuotingTests(unittest.TestCase):
         quoted empty string.
         """
         self.assertEqual(win32.cmdLineQuote(''), '""')
-
-
-
-class ProgramPathsTests(unittest.TestCase):
-    """
-    Tests for L{getProgramsMenuPath} and L{getProgramFilesPath}.
-    """
-
-    def test_getProgramsMenuPath(self):
-        """
-        L{getProgramsMenuPath} guesses the programs menu path on non-win32
-        platforms. On non-win32 it will try to figure out the path by
-        examining the registry.
-        """
-        if not platform.isWindows():
-            self.assertEqual(win32.getProgramsMenuPath(),
-                "C:\\Windows\\Start Menu\\Programs")
-        else:
-            self.assertIsInstance(win32.getProgramsMenuPath(), str)
-
-
-    def test_getProgramFilesPath(self):
-        """
-        L{getProgramFilesPath} returns the "program files" path on win32.
-        """
-        self.assertIsInstance(win32.getProgramFilesPath(), str)
-
-    if not platform.isWindows():
-        test_getProgramFilesPath.skip = (
-            "Cannot figure out the program files path on non-win32 platform")
-

@@ -29,7 +29,7 @@ class FakeConnector(object):
 
 
 
-class ReconnectingFactoryTestCase(TestCase):
+class ReconnectingFactoryTests(TestCase):
     """
     Tests for L{ReconnectingClientFactory}.
     """
@@ -110,7 +110,7 @@ class ReconnectingFactoryTestCase(TestCase):
         original = ReconnectingClientFactory()
         original.clock = clock
         reconstituted = pickle.loads(pickle.dumps(original))
-        self.assertIdentical(reconstituted.clock, None)
+        self.assertIsNone(reconstituted.clock)
 
 
     def test_deserializationResetsParameters(self):
@@ -125,11 +125,11 @@ class ReconnectingFactoryTestCase(TestCase):
 
         serialized = pickle.dumps(factory)
         unserialized = pickle.loads(serialized)
-        self.assertEqual(unserialized.connector, None)
-        self.assertEqual(unserialized._callID, None)
+        self.assertIsNone(unserialized.connector)
+        self.assertIsNone(unserialized._callID)
         self.assertEqual(unserialized.retries, 0)
         self.assertEqual(unserialized.delay, factory.initialDelay)
-        self.assertEqual(unserialized.continueTrying, True)
+        self.assertTrue(unserialized.continueTrying)
 
 
     def test_parametrizedClock(self):

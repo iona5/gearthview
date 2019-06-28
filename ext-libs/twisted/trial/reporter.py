@@ -16,17 +16,17 @@ import time
 import warnings
 import unittest as pyunit
 
+from collections import OrderedDict
+
 from zope.interface import implementer
 
-from twisted.python import _reflectpy3 as reflect, log
+from twisted.python import reflect, log
 from twisted.python.components import proxyForInterface
 from twisted.python.failure import Failure
 from twisted.python.util import untilConcludes
-try:
-    from collections import OrderedDict
-except ImportError:
-    from twisted.python.util import OrderedDict
+from twisted.python.compat import _PY3, items
 from twisted.trial import itrial, util
+from twisted.trial.unittest import makeTodo
 
 try:
     from subunit import TestProtocolClient
@@ -34,10 +34,12 @@ except ImportError:
     TestProtocolClient = None
 
 
+
 class BrokenTestCaseWarning(Warning):
     """
     Emitted as a warning when an exception occurs in one of setUp or tearDown.
     """
+
 
 
 class SafeStream(object):
@@ -49,8 +51,10 @@ class SafeStream(object):
     def __init__(self, original):
         self.original = original
 
+
     def __getattr__(self, name):
         return getattr(self.original, name)
+
 
     def write(self, *a, **kw):
         return untilConcludes(self.original.write, *a, **kw)
@@ -66,6 +70,9 @@ class TestResult(pyunit.TestResult, object):
     @type successes: C{int}
     """
 
+    # Used when no todo provided to addExpectedFailure or addUnexpectedSuccess.
+    _DEFAULT_TODO = 'Test expected to fail'
+
     def __init__(self):
         super(TestResult, self).__init__()
         self.skips = []
@@ -74,6 +81,7 @@ class TestResult(pyunit.TestResult, object):
         self.successes = 0
         self._timings = []
 
+
     def __repr__(self):
         return ('<%s run=%d errors=%d failures=%d todos=%d dones=%d skips=%d>'
                 % (reflect.qual(self.__class__), self.testsRun,
@@ -81,8 +89,10 @@ class TestResult(pyunit.TestResult, object):
                    len(self.expectedFailures), len(self.skips),
                    len(self.unexpectedSuccesses)))
 
+
     def _getTime(self):
         return time.time()
+
 
     def _getFailure(self, error):
         """
@@ -91,6 +101,7 @@ class TestResult(pyunit.TestResult, object):
         if isinstance(error, tuple):
             return Failure(error[1], error[0], error[2])
         return error
+
 
     def startTest(self, test):
         """
@@ -101,6 +112,7 @@ class TestResult(pyunit.TestResult, object):
         super(TestResult, self).startTest(test)
         self._testStarted = self._getTime()
 
+
     def stopTest(self, test):
         """
         This must be called after the given test is completed.
@@ -109,6 +121,7 @@ class TestResult(pyunit.TestResult, object):
         """
         super(TestResult, self).stopTest(test)
         self._lastTime = self._getTime() - self._testStarted
+
 
     def addFailure(self, test, fail):
         """
@@ -119,6 +132,7 @@ class TestResult(pyunit.TestResult, object):
         """
         self.failures.append((test, self._getFailure(fail)))
 
+
     def addError(self, test, error):
         """
         Report an error that occurred while running the given test.
@@ -127,6 +141,7 @@ class TestResult(pyunit.TestResult, object):
         @type error: L{Failure} or L{tuple}
         """
         self.errors.append((test, self._getFailure(error)))
+
 
     def addSkip(self, test, reason):
         """
@@ -141,57 +156,63 @@ class TestResult(pyunit.TestResult, object):
         """
         self.skips.append((test, reason))
 
-    def addUnexpectedSuccess(self, test, todo):
-        """Report that the given test succeeded against expectations.
+
+    def addUnexpectedSuccess(self, test, todo=None):
+        """
+        Report that the given test succeeded against expectations.
 
         In Trial, tests can be marked 'todo'. That is, they are expected to
         fail.  When a test that is expected to fail instead succeeds, it should
         call this method to report the unexpected success.
 
         @type test: L{pyunit.TestCase}
-        @type todo: L{unittest.Todo}
+        @type todo: L{unittest.Todo}, or L{None}, in which case a default todo
+            message is provided.
         """
-        # XXX - 'todo' should just be a string
+        if todo is None:
+            todo = makeTodo(self._DEFAULT_TODO)
         self.unexpectedSuccesses.append((test, todo))
 
-    def addExpectedFailure(self, test, error, todo):
-        """Report that the given test failed, and was expected to do so.
+
+    def addExpectedFailure(self, test, error, todo=None):
+        """
+        Report that the given test failed, and was expected to do so.
 
         In Trial, tests can be marked 'todo'. That is, they are expected to
         fail.
 
         @type test: L{pyunit.TestCase}
         @type error: L{Failure}
-        @type todo: L{unittest.Todo}
+        @type todo: L{unittest.Todo}, or L{None}, in which case a default todo
+            message is provided.
         """
-        # XXX - 'todo' should just be a string
+        if todo is None:
+            todo = makeTodo(self._DEFAULT_TODO)
         self.expectedFailures.append((test, error, todo))
 
+
     def addSuccess(self, test):
-        """Report that the given test succeeded.
+        """
+        Report that the given test succeeded.
 
         @type test: L{pyunit.TestCase}
         """
         self.successes += 1
 
-    def upDownError(self, method, error, warn, printStatus):
-        warnings.warn("upDownError is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=3)
 
-    def cleanupErrors(self, errs):
-        """Report an error that occurred during the cleanup between tests.
+    def wasSuccessful(self):
         """
-        warnings.warn("Cleanup errors are actual errors. Use addError. "
-                      "Deprecated in Twisted 8.0",
-                      category=DeprecationWarning, stacklevel=2)
+        Report whether or not this test suite was successful or not.
 
-    def startSuite(self, name):
-        warnings.warn("startSuite deprecated in Twisted 8.0",
-                      category=DeprecationWarning, stacklevel=2)
+        The behaviour of this method changed in L{pyunit} in Python 3.4 to
+        fail if there are any errors, failures, or unexpected successes.
+        Previous to 3.4, it was only if there were errors or failures. This
+        method implements the old behaviour for backwards compatibility reasons,
+        checking just for errors and failures.
 
-    def endSuite(self, name):
-        warnings.warn("endSuite deprecated in Twisted 8.0",
-                      category=DeprecationWarning, stacklevel=2)
+        @rtype: L{bool}
+        """
+        return len(self.failures) == len(self.errors) == 0
 
 
     def done(self):
@@ -234,6 +255,24 @@ class UncleanWarningsReporterWrapper(TestResultDecorator):
 
 
 
+@implementer(itrial.IReporter)
+class _ExitWrapper(TestResultDecorator):
+    """
+    A wrapper for a reporter that causes the reporter to stop after
+    unsuccessful tests.
+    """
+
+    def addError(self, *args, **kwargs):
+        self.shouldStop = True
+        return self._originalReporter.addError(*args, **kwargs)
+
+
+    def addFailure(self, *args, **kwargs):
+        self.shouldStop = True
+        return self._originalReporter.addFailure(*args, **kwargs)
+
+
+
 class _AdaptedReporter(TestResultDecorator):
     """
     TestResult decorator that makes sure that addError only gets tests that
@@ -259,9 +298,18 @@ class _AdaptedReporter(TestResultDecorator):
         return self._originalReporter.addError(test, error)
 
 
-    def addExpectedFailure(self, test, failure, todo):
+    def addExpectedFailure(self, test, failure, todo=None):
         """
         See L{itrial.IReporter}.
+
+        @type test: A L{pyunit.TestCase}.
+        @type failure: A L{failure.Failure} or L{exceptions.AssertionError}
+        @type todo: A L{unittest.Todo} or None
+
+        When C{todo} is L{None} a generic C{unittest.Todo} is built.
+
+        L{pyunit.TestCase}'s C{run()} calls this with 3 positional arguments
+        (without C{todo}).
         """
         return self._originalReporter.addExpectedFailure(
             self.testAdapter(test), failure, todo)
@@ -283,9 +331,17 @@ class _AdaptedReporter(TestResultDecorator):
         return self._originalReporter.addSkip(test, skip)
 
 
-    def addUnexpectedSuccess(self, test, todo):
+    def addUnexpectedSuccess(self, test, todo=None):
         """
         See L{itrial.IReporter}.
+
+        @type test: A L{pyunit.TestCase}.
+        @type todo: A L{unittest.Todo} or None
+
+        When C{todo} is L{None} a generic C{unittest.Todo} is built.
+
+        L{pyunit.TestCase}'s C{run()} calls this with 2 positional arguments
+        (without C{todo}).
         """
         test = self.testAdapter(test)
         return self._originalReporter.addUnexpectedSuccess(test, todo)
@@ -312,8 +368,8 @@ class Reporter(TestResult):
     A basic L{TestResult} with support for writing to a stream.
 
     @ivar _startTime: The time when the first test was started. It defaults to
-        C{None}, which means that no test was actually launched.
-    @type _startTime: C{float} or C{NoneType}
+        L{None}, which means that no test was actually launched.
+    @type _startTime: C{float} or L{None}
 
     @ivar _warningCache: A C{set} of tuples of warning message (file, line,
         text, category) which have already been written to the output stream
@@ -323,7 +379,7 @@ class Reporter(TestResult):
 
     @ivar _publisher: The log publisher which will be observed for warning
         events.
-    @type _publisher: L{LogPublisher} (or another type sufficiently similar)
+    @type _publisher: L{twisted.python.log.LogPublisher}
     """
 
     _separator = '-' * 79
@@ -362,20 +418,6 @@ class Reporter(TestResult):
             if key not in self._warningCache:
                 self._warningCache.add(key)
                 self._stream.write('%s:%s: %s: %s\n' % key)
-
-
-    def stream(self):
-        warnings.warn("stream is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        return self._stream
-    stream = property(stream)
-
-
-    def separator(self):
-        warnings.warn("separator is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        return self._separator
-    separator = property(separator)
 
 
     def startTest(self, test):
@@ -420,12 +462,6 @@ class Reporter(TestResult):
             self._write(self._formatFailureTraceback(error))
 
 
-    def write(self, format, *args):
-        warnings.warn("write is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        self._write(format, *args)
-
-
     def _write(self, format, *args):
         """
         Safely write to the reporter's stream.
@@ -440,12 +476,6 @@ class Reporter(TestResult):
         else:
             self._stream.write(s)
         untilConcludes(self._stream.flush)
-
-
-    def writeln(self, format, *args):
-        warnings.warn("writeln is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        self._writeln(format, *args)
 
 
     def _writeln(self, format, *args):
@@ -491,8 +521,8 @@ class Reporter(TestResult):
         When a C{TestCase} method fails synchronously, the stack looks like
         this:
          - [0]: C{defer.maybeDeferred}
-         - [1]: C{_utilspy3.runWithWarningsSuppressed}
-         - [2]: C{_utilspy3.runWithWarningsSuppressed}
+         - [1]: C{utils.runWithWarningsSuppressed}
+         - [2]: C{utils.runWithWarningsSuppressed}
          - [3:-2]: code in the test method which failed
          - [-1]: C{_synctest.fail}
 
@@ -531,9 +561,18 @@ class Reporter(TestResult):
         syncCase = (("_run", "_synctest"),
                     ("runWithWarningsSuppressed", "util"))
         asyncCase = (("maybeDeferred", "defer"),
-                     ("runWithWarningsSuppressed", "_utilspy3"))
+                     ("runWithWarningsSuppressed", "utils"))
 
         twoFrames = ((firstMethod, firstFile), (secondMethod, secondFile))
+
+        if _PY3:
+            # On PY3, we have an extra frame which is reraising the exception
+            for frame in newFrames:
+                frameFile = os.path.splitext(os.path.basename(frame[1]))[0]
+                if frameFile == "compat" and frame[0] == "reraise":
+                    # If it's in the compat module and is reraise, BLAM IT
+                    newFrames.pop(newFrames.index(frame))
+
         if twoFrames == syncCase:
             newFrames = newFrames[2:]
         elif twoFrames == asyncCase:
@@ -588,7 +627,7 @@ class Reporter(TestResult):
             outcome = content[1:]
             key = formatter(*outcome)
             groups.setdefault(key, []).append(case)
-        return groups.items()
+        return items(groups)
 
 
     def _printResults(self, flavor, errors, formatter):
@@ -621,15 +660,6 @@ class Reporter(TestResult):
         return ret
 
 
-    def printErrors(self):
-        """
-        Print all of the non-success results in full to the stream.
-        """
-        warnings.warn("printErrors is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        self._printErrors()
-
-
     def _printErrors(self):
         """
         Print all of the non-success results to the stream in full.
@@ -660,15 +690,6 @@ class Reporter(TestResult):
             summaries.append('successes=%d' % (self.successes,))
         summary = (summaries and ' (' + ', '.join(summaries) + ')') or ''
         return summary
-
-
-    def printSummary(self):
-        """
-        Print a line summarising the test results to the stream.
-        """
-        warnings.warn("printSummary is deprecated in Twisted 8.0.",
-                      category=DeprecationWarning, stacklevel=2)
-        self._printSummary()
 
 
     def _printSummary(self):
@@ -854,6 +875,7 @@ class _AnsiColorizer(object):
     def __init__(self, stream):
         self.stream = stream
 
+
     def supported(cls, stream=sys.stdout):
         """
         A class method that returns True if the current platform supports
@@ -877,6 +899,7 @@ class _AnsiColorizer(object):
                 return False
     supported = classmethod(supported)
 
+
     def write(self, text, color):
         """
         Write the given text to the stream in the given color.
@@ -887,6 +910,7 @@ class _AnsiColorizer(object):
         """
         color = self._colors[color]
         self.stream.write('\x1b[%s;1m%s\x1b[0m' % (color, text))
+
 
 
 class _Win32Colorizer(object):
@@ -912,6 +936,7 @@ class _Win32Colorizer(object):
             'white': red | green | blue | bold
             }
 
+
     def supported(cls, stream=sys.stdout):
         try:
             import win32console
@@ -931,11 +956,13 @@ class _Win32Colorizer(object):
             return True
     supported = classmethod(supported)
 
+
     def write(self, text, color):
         color = self._colors[color]
         self.screenBuffer.SetConsoleTextAttribute(color)
         self.stream.write(text)
         self.screenBuffer.SetConsoleTextAttribute(self._colors['normal'])
+
 
 
 class _NullColorizer(object):
@@ -945,9 +972,11 @@ class _NullColorizer(object):
     def __init__(self, stream):
         self.stream = stream
 
+
     def supported(cls, stream=sys.stdout):
         return True
     supported = classmethod(supported)
+
 
     def write(self, text, color):
         self.stream.write(text)
@@ -1103,7 +1132,7 @@ class SubunitReporter(object):
             addExpectedFailure(test, failure)
 
 
-    def addUnexpectedSuccess(self, test, todo):
+    def addUnexpectedSuccess(self, test, todo=None):
         """
         Record an unexpected success.
 
@@ -1142,6 +1171,7 @@ class TreeReporter(Reporter):
                 self._colorizer = colorizer(stream)
                 break
 
+
     def getDescription(self, test):
         """
         Return the name of the method which 'test' represents.  This is
@@ -1151,29 +1181,36 @@ class TreeReporter(Reporter):
         """
         return test.id().split('.')[-1]
 
+
     def addSuccess(self, test):
         super(TreeReporter, self).addSuccess(test)
         self.endLine('[OK]', self.SUCCESS)
+
 
     def addError(self, *args):
         super(TreeReporter, self).addError(*args)
         self.endLine('[ERROR]', self.ERROR)
 
+
     def addFailure(self, *args):
         super(TreeReporter, self).addFailure(*args)
         self.endLine('[FAIL]', self.FAILURE)
+
 
     def addSkip(self, *args):
         super(TreeReporter, self).addSkip(*args)
         self.endLine('[SKIPPED]', self.SKIP)
 
+
     def addExpectedFailure(self, *args):
         super(TreeReporter, self).addExpectedFailure(*args)
         self.endLine('[TODO]', self.TODO)
 
+
     def addUnexpectedSuccess(self, *args):
         super(TreeReporter, self).addUnexpectedSuccess(*args)
         self.endLine('[SUCCESS!?!]', self.TODONE)
+
 
     def _write(self, format, *args):
         if args:
@@ -1221,11 +1258,13 @@ class TreeReporter(Reporter):
         self.endLine('[ERROR]', self.ERROR)
         super(TreeReporter, self).cleanupErrors(errs)
 
+
     def upDownError(self, method, error, warn, printStatus):
         self._colorizer.write("  %s" % method, self.ERROR)
         if printStatus:
             self.endLine('[ERROR]', self.ERROR)
         super(TreeReporter, self).upDownError(method, error, warn, printStatus)
+
 
     def startTest(self, test):
         """

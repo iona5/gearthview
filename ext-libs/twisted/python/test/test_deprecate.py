@@ -7,7 +7,7 @@ Tests for Twisted's deprecation framework, L{twisted.python.deprecate}.
 
 from __future__ import division, absolute_import
 
-import sys, types, warnings
+import sys, types, warnings, inspect
 from os.path import normcase
 from warnings import simplefilter, catch_warnings
 try:
@@ -21,9 +21,15 @@ from twisted.python.deprecate import DEPRECATION_WARNING_FORMAT
 from twisted.python.deprecate import (
     getDeprecationWarningString,
     deprecated, _appendToDocstring, _getDeprecationDocstring,
-    _fullyQualifiedName as fullyQualifiedName)
+    _fullyQualifiedName as fullyQualifiedName,
+    _mutuallyExclusiveArguments,
+    deprecatedProperty,
+    _passedArgSpec, _passedSignature
+)
 
-from twisted.python.versions import Version
+from twisted.python.compat import _PY3, execfile
+from incremental import Version
+from twisted.python.runtime import platform
 from twisted.python.filepath import FilePath
 
 from twisted.python.test import deprecatedattributes
@@ -78,10 +84,10 @@ class ModuleProxyTests(SynchronousTestCase):
         """
         Getting a normal attribute on a L{twisted.python.deprecate._ModuleProxy}
         retrieves the underlying attribute's value, and raises C{AttributeError}
-        if a non-existant attribute is accessed.
+        if a non-existent attribute is accessed.
         """
         proxy = self._makeProxy(SOME_ATTRIBUTE='hello')
-        self.assertIdentical(proxy.SOME_ATTRIBUTE, 'hello')
+        self.assertIs(proxy.SOME_ATTRIBUTE, 'hello')
         self.assertRaises(AttributeError, getattr, proxy, 'DOES_NOT_EXIST')
 
 
@@ -116,7 +122,7 @@ class ModuleProxyTests(SynchronousTestCase):
         """
         proxy = self._makeProxy()
         proxy._module = 1
-        self.assertNotEquals(object.__getattribute__(proxy, '_module'), 1)
+        self.assertNotEqual(object.__getattribute__(proxy, '_module'), 1)
         self.assertEqual(proxy._module, 1)
 
 
@@ -177,7 +183,7 @@ class DeprecatedAttributeTests(SynchronousTestCase):
         addStackLevel()
         warningsShown = self.flushWarnings([
             self.test_deprecatedAttributeHelper])
-        self.assertIdentical(warningsShown[0]['category'], DeprecationWarning)
+        self.assertIs(warningsShown[0]['category'], DeprecationWarning)
         self.assertEqual(
             warningsShown[0]['message'],
             self._getWarningString(name))
@@ -204,7 +210,7 @@ class DeprecatedAttributeTests(SynchronousTestCase):
 
         warningsShown = self.flushWarnings([self.test_deprecatedAttribute])
         self.assertEqual(len(warningsShown), 1)
-        self.assertIdentical(warningsShown[0]['category'], DeprecationWarning)
+        self.assertIs(warningsShown[0]['category'], DeprecationWarning)
         self.assertEqual(
             warningsShown[0]['message'],
             self._getWarningString(name))
@@ -238,7 +244,7 @@ class DeprecatedAttributeTests(SynchronousTestCase):
             self._testModuleName,
             'second')
 
-        self.assertIdentical(proxy, sys.modules[self._testModuleName])
+        self.assertIs(proxy, sys.modules[self._testModuleName])
 
 
 
@@ -250,7 +256,7 @@ class ImportedModuleAttributeTests(TwistedModulesMixin, SynchronousTestCase):
 
     _packageInit = """\
 from twisted.python.deprecate import deprecatedModuleAttribute
-from twisted.python.versions import Version
+from incremental import Version
 
 deprecatedModuleAttribute(
     Version('Package', 1, 2, 3), 'message', __name__, 'module')
@@ -388,6 +394,12 @@ def callTestFunction():
         self.addCleanup(
             lambda: (sys.modules.clear(), sys.modules.update(modules)))
 
+        # On Windows on Python 3, most FilePath interactions produce
+        # DeprecationWarnings, so flush them here so that they don't interfere
+        # with the tests.
+        if platform.isWindows() and _PY3:
+            self.flushWarnings()
+
 
     def test_warning(self):
         """
@@ -466,7 +478,7 @@ def callTestFunction():
         self.addCleanup(sys.modules.pop, module.__name__)
 
         module.callTestFunction()
-        warningsShown = self.flushWarnings()
+        warningsShown = self.flushWarnings([module.testFunction])
         warnedPath = FilePath(warningsShown[0]["filename"].encode("utf-8"))
         expectedPath = self.package.sibling(
             b'twisted_renamed_helper').child(b'module.py')
@@ -528,6 +540,7 @@ def callTestFunction():
             "Unexpected warning string: %r" % (msg,))
 
 
+
 def dummyCallable():
     """
     Do nothing.
@@ -546,7 +559,7 @@ def dummyReplacementMethod():
 
 
 
-class TestDeprecationWarnings(SynchronousTestCase):
+class DeprecationWarningsTests(SynchronousTestCase):
     def test_getDeprecationWarningString(self):
         """
         L{getDeprecationWarningString} returns a string that tells us that a
@@ -556,7 +569,7 @@ class TestDeprecationWarnings(SynchronousTestCase):
         self.assertEqual(
             getDeprecationWarningString(self.test_getDeprecationWarningString,
                                         version),
-            "%s.TestDeprecationWarnings.test_getDeprecationWarningString "
+            "%s.DeprecationWarningsTests.test_getDeprecationWarningString "
             "was deprecated in Twisted 8.0.0" % (__name__,))
 
 
@@ -571,7 +584,7 @@ class TestDeprecationWarnings(SynchronousTestCase):
         self.assertEqual(
             getDeprecationWarningString(self.test_getDeprecationWarningString,
                                         version, format),
-            '%s.TestDeprecationWarnings.test_getDeprecationWarningString was '
+            '%s.DeprecationWarningsTests.test_getDeprecationWarningString was '
             'deprecated in Twisted 8.0.0: This is a message' % (__name__,))
 
 
@@ -620,14 +633,21 @@ class TestDeprecationWarnings(SynchronousTestCase):
         about the deprecation.
         """
 
+        def localDummyCallable():
+            """
+            Do nothing.
+
+            This is used to test the deprecation decorators.
+            """
+
         version = Version('Twisted', 8, 0, 0)
-        dummy = deprecated(version)(dummyCallable)
+        dummy = deprecated(version)(localDummyCallable)
 
         _appendToDocstring(
-            dummyCallable,
+            localDummyCallable,
             _getDeprecationDocstring(version, ''))
 
-        self.assertEqual(dummyCallable.__doc__, dummy.__doc__)
+        self.assertEqual(localDummyCallable.__doc__, dummy.__doc__)
 
 
     def test_versionMetadata(self):
@@ -677,6 +697,143 @@ class TestDeprecationWarnings(SynchronousTestCase):
                 __name__))
 
 
+
+@deprecated(Version('Twisted', 1, 2, 3))
+class DeprecatedClass(object):
+    """
+    Class which is entirely deprecated without having a replacement.
+    """
+
+
+
+class ClassWithDeprecatedProperty(object):
+    """
+    Class with a single deprecated property.
+    """
+
+    _someProtectedValue = None
+
+    @deprecatedProperty(Version('Twisted', 1, 2, 3))
+    def someProperty(self):
+        """
+        Getter docstring.
+
+        @return: The property.
+        """
+        return self._someProtectedValue
+
+
+    @someProperty.setter
+    def someProperty(self, value):
+        """
+        Setter docstring.
+        """
+        self._someProtectedValue = value
+
+
+
+class DeprecatedDecoratorTests(SynchronousTestCase):
+    """
+    Tests for deprecated decorators.
+    """
+
+    def assertDocstring(self, target, expected):
+        """
+        Check that C{target} object has the C{expected} docstring lines.
+
+        @param target: Object which is checked.
+        @type target: C{anything}
+
+        @param expected: List of lines, ignoring empty lines or leading or
+            trailing spaces.
+        @type expected: L{list} or L{str}
+        """
+        self.assertEqual(
+            expected,
+            [x.strip() for x in target.__doc__.splitlines() if x.strip()]
+            )
+
+
+    def test_propertyGetter(self):
+        """
+        When L{deprecatedProperty} is used on a C{property}, accesses raise a
+        L{DeprecationWarning} and getter docstring is updated to inform the
+        version in which it was deprecated. C{deprecatedVersion} attribute is
+        also set to inform the deprecation version.
+        """
+        obj = ClassWithDeprecatedProperty()
+
+        obj.someProperty
+
+        self.assertDocstring(
+            ClassWithDeprecatedProperty.someProperty,
+            [
+                'Getter docstring.',
+                '@return: The property.',
+                'Deprecated in Twisted 1.2.3.',
+                ],
+            )
+        ClassWithDeprecatedProperty.someProperty.deprecatedVersion = Version(
+            'Twisted', 1, 2, 3)
+
+        message = (
+            'twisted.python.test.test_deprecate.ClassWithDeprecatedProperty.'
+            'someProperty was deprecated in Twisted 1.2.3'
+            )
+        warnings = self.flushWarnings([self.test_propertyGetter])
+        self.assertEqual(1, len(warnings))
+        self.assertEqual(DeprecationWarning, warnings[0]['category'])
+        self.assertEqual(message, warnings[0]['message'])
+
+
+    def test_propertySetter(self):
+        """
+        When L{deprecatedProperty} is used on a C{property}, setter accesses
+        raise a L{DeprecationWarning}.
+        """
+        newValue = object()
+        obj = ClassWithDeprecatedProperty()
+
+        obj.someProperty = newValue
+
+        self.assertIs(newValue, obj._someProtectedValue)
+        message = (
+            'twisted.python.test.test_deprecate.ClassWithDeprecatedProperty.'
+            'someProperty was deprecated in Twisted 1.2.3'
+        )
+        warnings = self.flushWarnings([self.test_propertySetter])
+        self.assertEqual(1, len(warnings))
+        self.assertEqual(DeprecationWarning, warnings[0]['category'])
+        self.assertEqual(message, warnings[0]['message'])
+
+
+    def test_class(self):
+        """
+        When L{deprecated} is used on a class, instantiations raise a
+        L{DeprecationWarning} and class's docstring is updated to inform the
+        version in which it was deprecated. C{deprecatedVersion} attribute is
+        also set to inform the deprecation version.
+        """
+        DeprecatedClass()
+
+        self.assertDocstring(
+            DeprecatedClass,
+            [('Class which is entirely deprecated without having a '
+              'replacement.'),
+            'Deprecated in Twisted 1.2.3.'],
+            )
+        DeprecatedClass.deprecatedVersion = Version('Twisted', 1, 2, 3)
+
+        message = (
+            'twisted.python.test.test_deprecate.DeprecatedClass '
+            'was deprecated in Twisted 1.2.3'
+            )
+        warnings = self.flushWarnings([self.test_class])
+        self.assertEqual(1, len(warnings))
+        self.assertEqual(DeprecationWarning, warnings[0]['category'])
+        self.assertEqual(message, warnings[0]['message'])
+
+
     def test_deprecatedReplacement(self):
         """
         L{deprecated} takes an additional replacement parameter that can be used
@@ -716,7 +873,7 @@ class TestDeprecationWarnings(SynchronousTestCase):
 
 
 
-class TestAppendToDocstring(SynchronousTestCase):
+class AppendToDocstringTests(SynchronousTestCase):
     """
     Test the _appendToDocstring function.
 
@@ -782,3 +939,186 @@ class TestAppendToDocstring(SynchronousTestCase):
         _appendToDocstring(multiLineDocstring, "Appended text.")
         self.assertEqual(
             expectedDocstring.__doc__, multiLineDocstring.__doc__)
+
+
+
+class MutualArgumentExclusionTests(SynchronousTestCase):
+    """
+    Tests for L{mutuallyExclusiveArguments}.
+    """
+
+    def checkPassed(self, func, *args, **kw):
+        """
+        Test an invocation of L{passed} with the given function, arguments, and
+        keyword arguments.
+
+        @param func: A function whose argspec will be inspected.
+        @type func: A callable.
+
+        @param args: The arguments which could be passed to C{func}.
+
+        @param kw: The keyword arguments which could be passed to C{func}.
+
+        @return: L{_passedSignature} or L{_passedArgSpec}'s return value
+        @rtype: L{dict}
+        """
+        if getattr(inspect, "signature", None):
+            # Python 3
+            return _passedSignature(inspect.signature(func), args, kw)
+        else:
+            # Python 2
+            return _passedArgSpec(inspect.getargspec(func), args, kw)
+
+
+    def test_passed_simplePositional(self):
+        """
+        L{passed} identifies the arguments passed by a simple
+        positional test.
+        """
+        def func(a, b):
+            pass
+        self.assertEqual(self.checkPassed(func, 1, 2), dict(a=1, b=2))
+
+
+    def test_passed_tooManyArgs(self):
+        """
+        L{passed} raises a L{TypeError} if too many arguments are
+        passed.
+        """
+        def func(a, b):
+            pass
+        self.assertRaises(TypeError, self.checkPassed, func, 1, 2, 3)
+
+
+    def test_passed_doublePassKeyword(self):
+        """
+        L{passed} raises a L{TypeError} if a argument is passed both
+        positionally and by keyword.
+        """
+        def func(a):
+            pass
+        self.assertRaises(TypeError, self.checkPassed, func, 1, a=2)
+
+
+    def test_passed_unspecifiedKeyword(self):
+        """
+        L{passed} raises a L{TypeError} if a keyword argument not
+        present in the function's declaration is passed.
+        """
+        def func(a):
+            pass
+        self.assertRaises(TypeError, self.checkPassed, func, 1, z=2)
+
+
+    def test_passed_star(self):
+        """
+        L{passed} places additional positional arguments into a tuple
+        under the name of the star argument.
+        """
+        def func(a, *b):
+            pass
+        self.assertEqual(self.checkPassed(func, 1, 2, 3),
+                         dict(a=1, b=(2, 3)))
+
+
+    def test_passed_starStar(self):
+        """
+        Additional keyword arguments are passed as a dict to the star star
+        keyword argument.
+        """
+        def func(a, **b):
+            pass
+        self.assertEqual(self.checkPassed(func, 1, x=2, y=3, z=4),
+                         dict(a=1, b=dict(x=2, y=3, z=4)))
+
+
+    def test_passed_noDefaultValues(self):
+        """
+        The results of L{passed} only include arguments explicitly
+        passed, not default values.
+        """
+        def func(a, b, c=1, d=2, e=3):
+            pass
+        self.assertEqual(self.checkPassed(func, 1, 2, e=7),
+                         dict(a=1, b=2, e=7))
+
+
+    def test_mutualExclusionPrimeDirective(self):
+        """
+        L{mutuallyExclusiveArguments} does not interfere in its
+        decoratee's operation, either its receipt of arguments or its return
+        value.
+        """
+        @_mutuallyExclusiveArguments([('a', 'b')])
+        def func(x, y, a=3, b=4):
+            return x + y + a + b
+
+        self.assertEqual(func(1, 2), 10)
+        self.assertEqual(func(1, 2, 7), 14)
+        self.assertEqual(func(1, 2, b=7), 13)
+
+
+    def test_mutualExclusionExcludesByKeyword(self):
+        """
+        L{mutuallyExclusiveArguments} raises a L{TypeError}n if its
+        decoratee is passed a pair of mutually exclusive arguments.
+        """
+        @_mutuallyExclusiveArguments([['a', 'b']])
+        def func(a=3, b=4):
+            return a + b
+
+        self.assertRaises(TypeError, func, a=3, b=4)
+
+
+    def test_invalidParameterType(self):
+        """
+        Create a fake signature with an invalid parameter
+        type to test error handling.  The valid parameter
+        types are specified in L{inspect.Parameter}.
+        """
+        class FakeSignature:
+            def __init__(self, parameters):
+                self.parameters = parameters
+
+        class FakeParameter:
+            def __init__(self, name, kind):
+                self.name = name
+                self.kind = kind
+
+        def func(a, b):
+            pass
+
+        func(1, 2)
+        parameters = inspect.signature(func).parameters
+        dummyParameters = parameters.copy()
+        dummyParameters['c'] = FakeParameter("fake", "fake")
+        fakeSig = FakeSignature(dummyParameters)
+        self.assertRaises(TypeError, _passedSignature, fakeSig, (1, 2), {})
+    if not getattr(inspect, "signature", None):
+        test_invalidParameterType.skip = "inspect.signature() not available"
+
+
+if sys.version_info >= (3,):
+    _path = FilePath(__file__).parent().child("_deprecatetests.py.3only")
+
+    _g = {}
+    execfile(_path.path, _g)
+
+    KeywordOnlyTests = _g["KeywordOnlyTests"]
+else:
+    from twisted.trial.unittest import TestCase
+
+    class KeywordOnlyTests(TestCase):
+        """
+        A dummy class to show that this test file was discovered but the tests
+        are unable to be ran in this version of Python.
+        """
+        skip = (
+            "keyword only arguments (PEP 3102) are "
+            "only in Python 3 and higher")
+
+        def test_notAvailable(self):
+            """
+            A skipped test to show that this was not ran because the Python is
+            too old.
+            """

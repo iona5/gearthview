@@ -42,13 +42,12 @@ class SearchHostsFileTests(TestCase, GoodTempPathMixin):
     def test_notFoundAddress(self):
         """
         If there is no address information for the hostname passed to
-        L{searchFileFor}, C{None} is returned.
+        L{searchFileFor}, L{None} is returned.
         """
         hosts = self.path()
         hosts.setContent(
             b"10.2.3.4 foo.example.com\n")
-        self.assertIdentical(
-            None, searchFileFor(hosts.path, b"bar.example.com"))
+        self.assertIsNone(searchFileFor(hosts.path, b"bar.example.com"))
 
 
     def test_firstAddress(self):
@@ -122,7 +121,7 @@ class SearchHostsFileForAllTests(TestCase, GoodTempPathMixin):
 
 
 
-class HostsTestCase(TestCase, GoodTempPathMixin):
+class HostsTests(TestCase, GoodTempPathMixin):
     """
     Tests for the I{hosts(5)}-based L{twisted.names.hosts.Resolver}.
     """
@@ -218,12 +217,12 @@ class HostsTestCase(TestCase, GoodTempPathMixin):
         return d
 
 
-    def testNotImplemented(self):
+    def test_notImplemented(self):
         return self.assertFailure(self.resolver.lookupMailExchange(b'EXAMPLE'),
                                   NotImplementedError)
 
 
-    def testQuery(self):
+    def test_query(self):
         d = self.resolver.query(Query(b'EXAMPLE'))
         d.addCallback(lambda x: self.assertEqual(x[0][0].payload.dottedQuad(),
                                                  '1.1.1.1'))

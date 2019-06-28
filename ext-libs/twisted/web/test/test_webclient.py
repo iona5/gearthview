@@ -7,6 +7,7 @@ Tests for the old L{twisted.web.client} APIs, C{getPage} and friends.
 
 from __future__ import division, absolute_import
 
+import io
 import os
 from errno import ENOSPC
 
@@ -15,14 +16,17 @@ try:
 except ImportError:
     from urllib.parse import urlparse, urljoin
 
-from twisted.python.compat import _PY3, networkString, nativeString, intToBytes
-from twisted.trial import unittest
+from twisted.python.compat import networkString, nativeString, intToBytes
+from twisted.trial import unittest, util
 from twisted.web import server, client, error, resource
-from twisted.internet import reactor, defer, interfaces
+from twisted.web.static import Data
+from twisted.web.util import Redirect
+from twisted.internet import address, reactor, defer, interfaces
+from twisted.internet.protocol import ClientFactory
 from twisted.python.filepath import FilePath
-from twisted.python.log import msg
 from twisted.protocols.policies import WrappingFactory
-from twisted.test.proto_helpers import StringTransport
+from twisted.test.proto_helpers import (
+    StringTransport, waitUntilAllDisconnected, EventLoggingObserver)
 
 try:
     from twisted.internet import ssl
@@ -30,34 +34,18 @@ except:
     ssl = None
 
 from twisted import test
-serverPEM = FilePath(test.__file__.encode("utf-8")).sibling(b'server.pem')
-serverPEMPath = nativeString(serverPEM.path)
+from twisted.logger import (globalLogPublisher, FilteringLogObserver,
+                            LogLevelFilterPredicate, LogLevel, Logger)
 
-# Remove this in #6177, when static is ported to Python 3:
-if _PY3:
-    from twisted.web.test.test_web import Data
-else:
-    from twisted.web.static import Data
+from twisted.web.test.injectionhelpers import (
+    MethodInjectionTestsMixin,
+    URIInjectionTestsMixin,
+)
 
-# Remove this in #6178, when util is ported to Python 3:
-if _PY3:
-    class Redirect(resource.Resource):
-        isLeaf = 1
 
-        def __init__(self, url):
-            resource.Resource.__init__(self)
-            self.url = url
 
-        def render(self, request):
-            request.redirect(self.url)
-            return b""
-
-        def getChild(self, name, request):
-            return self
-else:
-    from twisted.web.util import Redirect
-
-_PY3DownloadSkip = "downloadPage will be ported to Python 3 in ticket #6197."
+serverPEM = FilePath(test.__file__).sibling('server.pem')
+serverPEMPath = serverPEM.asBytesMode().path
 
 
 class ExtendedRedirect(resource.Resource):
@@ -66,10 +54,10 @@ class ExtendedRedirect(resource.Resource):
 
     The HTTP status code is set according to the C{code} query parameter.
 
-    @type lastMethod: C{str}
+    @type lastMethod: C{bytes}
     @ivar lastMethod: Last handled HTTP request method
     """
-    isLeaf = 1
+    isLeaf = True
     lastMethod = None
 
 
@@ -114,6 +102,20 @@ class ForeverTakingResource(resource.Resource):
         return server.NOT_DONE_YET
 
 
+class ForeverTakingNoReadingResource(resource.Resource):
+    """
+    L{ForeverTakingNoReadingResource} is a resource that never finishes
+    responding and that removes itself from the read loop.
+    """
+    def __init__(self):
+        resource.Resource.__init__(self)
+
+    def render(self, request):
+        # Stop the producing.
+        request.transport.pauseProducing()
+        return server.NOT_DONE_YET
+
+
 class CookieMirrorResource(resource.Resource):
     def render(self, request):
         l = []
@@ -150,7 +152,7 @@ class HostHeaderResource(resource.Resource):
     from the request.
     """
     def render(self, request):
-        return request.received_headers[b'host']
+        return request.requestHeaders.getRawHeaders(b"host")[0]
 
 
 
@@ -162,7 +164,7 @@ class PayloadResource(resource.Resource):
     """
     def render(self, request):
         data = request.content.read()
-        contentLength = request.received_headers[b'content-length']
+        contentLength = request.requestHeaders.getRawHeaders(b"content-length")[0]
         if len(data) != 100 or int(contentLength) != 100:
             return b"ERROR"
         return data
@@ -216,54 +218,45 @@ class CountingResource(resource.Resource):
         return b"Success"
 
 
-class ParseUrlTestCase(unittest.TestCase):
+
+class URLJoinTests(unittest.TestCase):
     """
-    Test URL parsing facility and defaults values.
+    Tests for L{client._urljoin}.
     """
-
-    def test_parse(self):
+    def test_noFragments(self):
         """
-        L{client._parse} correctly parses a URL into its various components.
+        L{client._urljoin} does not include a fragment identifier in the
+        resulting URL if neither the base nor the new path include a fragment
+        identifier.
         """
-        # The default port for HTTP is 80.
         self.assertEqual(
-            client._parse(b'http://127.0.0.1/'),
-            (b'http', b'127.0.0.1', 80, b'/'))
-
-        # The default port for HTTPS is 443.
+            client._urljoin(b'http://foo.com/bar', b'/quux'),
+            b'http://foo.com/quux')
         self.assertEqual(
-            client._parse(b'https://127.0.0.1/'),
-            (b'https', b'127.0.0.1', 443, b'/'))
-
-        # Specifying a port.
+            client._urljoin(b'http://foo.com/bar#', b'/quux'),
+            b'http://foo.com/quux')
         self.assertEqual(
-            client._parse(b'http://spam:12345/'),
-            (b'http', b'spam', 12345, b'/'))
-
-        # Weird (but commonly accepted) structure uses default port.
-        self.assertEqual(
-            client._parse(b'http://spam:/'),
-            (b'http', b'spam', 80, b'/'))
-
-        # Spaces in the hostname are trimmed, the default path is /.
-        self.assertEqual(
-            client._parse(b'http://foo '),
-            (b'http', b'foo', 80, b'/'))
+            client._urljoin(b'http://foo.com/bar', b'/quux#'),
+            b'http://foo.com/quux')
 
 
-    def test_externalUnicodeInterference(self):
+    def test_preserveFragments(self):
         """
-        L{client._parse} should return C{bytes} for the scheme, host, and path
-        elements of its return tuple, even when passed an URL which has
-        previously been passed to L{urlparse} as a C{unicode} string.
+        L{client._urljoin} preserves the fragment identifier from either the
+        new path or the base URL respectively, as specified in the HTTP 1.1 bis
+        draft.
+
+        @see: U{https://tools.ietf.org/html/draft-ietf-httpbis-p2-semantics-22#section-7.1.2}
         """
-        badInput = u'http://example.com/path'
-        goodInput = badInput.encode('ascii')
-        urlparse(badInput)
-        scheme, host, port, path = client._parse(goodInput)
-        self.assertIsInstance(scheme, bytes)
-        self.assertIsInstance(host, bytes)
-        self.assertIsInstance(path, bytes)
+        self.assertEqual(
+            client._urljoin(b'http://foo.com/bar#frag', b'/quux'),
+            b'http://foo.com/quux#frag')
+        self.assertEqual(
+            client._urljoin(b'http://foo.com/bar', b'/quux#frag2'),
+            b'http://foo.com/quux#frag2')
+        self.assertEqual(
+            client._urljoin(b'http://foo.com/bar#frag', b'/quux#frag2'),
+            b'http://foo.com/quux#frag2')
 
 
 
@@ -272,6 +265,9 @@ class HTTPPageGetterTests(unittest.TestCase):
     Tests for L{HTTPPagerGetter}, the HTTP client protocol implementation
     used to implement L{getPage}.
     """
+    suppress = [util.suppress(category=DeprecationWarning)]
+
+
     def test_earlyHeaders(self):
         """
         When a connection is made, L{HTTPPagerGetter} sends the headers from
@@ -310,7 +306,11 @@ class HTTPPageGetterTests(unittest.TestCase):
 
 
 
-class WebClientTestCase(unittest.TestCase):
+class WebClientTests(unittest.TestCase):
+    suppress = [util.suppress(category=DeprecationWarning)]
+    _log = Logger()
+
+
     def _listen(self, site):
         return reactor.listenTCP(0, site, interface="127.0.0.1")
 
@@ -318,12 +318,13 @@ class WebClientTestCase(unittest.TestCase):
         self.agent = None # for twisted.web.client.Agent test
         self.cleanupServerConnections = 0
         r = resource.Resource()
-        r.putChild(b"file", Data(b"0123456789", b"text/html"))
+        r.putChild(b"file", Data(b"0123456789", "text/html"))
         r.putChild(b"redirect", Redirect(b"/file"))
         self.infiniteRedirectResource = CountingRedirect(b"/infiniteRedirect")
         r.putChild(b"infiniteRedirect", self.infiniteRedirectResource)
         r.putChild(b"wait", ForeverTakingResource())
         r.putChild(b"write-then-wait", ForeverTakingResource(write=True))
+        r.putChild(b"never-read", ForeverTakingNoReadingResource())
         r.putChild(b"error", ErrorResource())
         r.putChild(b"nolength", NoLengthResource())
         r.putChild(b"host", HostHeaderResource())
@@ -337,7 +338,7 @@ class WebClientTestCase(unittest.TestCase):
         r.putChild(b"afterFoundGetCounter", self.afterFoundGetCounter)
         r.putChild(b"afterFoundGetRedirect", Redirect(b"/afterFoundGetCounter"))
 
-        miscasedHead = Data(b"miscased-head GET response content", b"major/minor")
+        miscasedHead = Data(b"miscased-head GET response content", "major/minor")
         miscasedHead.render_Head = lambda request: b"miscased-head content"
         r.putChild(b"miscased-head", miscasedHead)
 
@@ -362,11 +363,13 @@ class WebClientTestCase(unittest.TestCase):
         # the connection and cleaned up after themselves.
         for n in range(min(len(connections), self.cleanupServerConnections)):
             proto = connections.pop()
-            msg("Closing %r" % (proto,))
-            proto.transport.loseConnection()
-        if connections:
-            msg("Some left-over connections; this test is probably buggy.")
-        return self.port.stopListening()
+            self._log.info("Closing {proto}", proto=proto)
+            proto.transport.abortConnection()
+        d = self.port.stopListening()
+
+        return defer.DeferredList([waitUntilAllDisconnected(
+            reactor, list(self.wrapper.protocols.keys())), d])
+
 
     def getURL(self, path):
         host = "http://127.0.0.1:%d/" % self.portno
@@ -417,22 +420,43 @@ class WebClientTestCase(unittest.TestCase):
         d.addCallback(cbFailed)
         return d
 
+
     def test_downloadPageLogsFileCloseError(self):
         """
         If there is an exception closing the file being written to after the
         connection is prematurely closed, that exception is logged.
         """
+        exc = IOError(ENOSPC, "No file left on device")
+
         class BrokenFile:
             def write(self, bytes):
                 pass
 
             def close(self):
-                raise IOError(ENOSPC, "No file left on device")
+                raise exc
+
+        logObserver = EventLoggingObserver()
+        filtered = FilteringLogObserver(
+            logObserver,
+            [LogLevelFilterPredicate(defaultLogLevel=LogLevel.critical)]
+        )
+        globalLogPublisher.addObserver(filtered)
+        self.addCleanup(lambda: globalLogPublisher.removeObserver(filtered))
 
         d = client.downloadPage(self.getURL("broken"), BrokenFile())
         d = self.assertFailure(d, client.PartialDownloadError)
+
         def cbFailed(ignored):
+            self.assertEquals(1, len(logObserver))
+            event = logObserver[0]
+            f = event["log_failure"]
+            self.assertIsInstance(f.value, IOError)
+            self.assertEquals(
+                f.value.args,
+                exc.args
+            )
             self.assertEqual(len(self.flushLoggedErrors(IOError)), 1)
+
         d.addCallback(cbFailed)
         return d
 
@@ -507,8 +531,8 @@ class WebClientTestCase(unittest.TestCase):
 
     def testDownloadPage(self):
         downloads = []
-        downloadData = [(b"file", self.mktemp(), b"0123456789"),
-                        (b"nolength", self.mktemp(), b"nolength")]
+        downloadData = [("file", self.mktemp(), b"0123456789"),
+                        ("nolength", self.mktemp(), b"nolength")]
 
         for (url, name, data) in downloadData:
             d = client.downloadPage(self.getURL(url), name)
@@ -517,7 +541,8 @@ class WebClientTestCase(unittest.TestCase):
         return defer.gatherResults(downloads)
 
     def _cbDownloadPageTest(self, ignored, data, name):
-        bytes = file(name, "rb").read()
+        with open(name, "rb") as f:
+            bytes = f.read()
         self.assertEqual(bytes, data)
 
     def testDownloadPageError1(self):
@@ -545,8 +570,7 @@ class WebClientTestCase(unittest.TestCase):
     def testDownloadPageError3(self):
         # make sure failures in open() are caught too. This is tricky.
         # Might only work on posix.
-        tmpfile = open("unwritable", "wb")
-        tmpfile.close()
+        open("unwritable", "wb").close()
         os.chmod("unwritable", 0) # make it unwritable (to us)
         d = self.assertFailure(
             client.downloadPage(self.getURL("file"), "unwritable"),
@@ -577,14 +601,14 @@ class WebClientTestCase(unittest.TestCase):
 
     def testFactoryInfo(self):
         url = self.getURL('file')
-        scheme, host, port, path = client._parse(url)
+        uri = client.URI.fromBytes(url)
         factory = client.HTTPClientFactory(url)
-        reactor.connectTCP(nativeString(host), port, factory)
+        reactor.connectTCP(nativeString(uri.host), uri.port, factory)
         return factory.deferred.addCallback(self._cbFactoryInfo, factory)
 
     def _cbFactoryInfo(self, ignoredResult, factory):
         self.assertEqual(factory.status, b'200')
-        self.assert_(factory.version.startswith(b'HTTP/'))
+        self.assertTrue(factory.version.startswith(b'HTTP/'))
         self.assertEqual(factory.message, b'OK')
         self.assertEqual(factory.response_headers[b'content-length'][0], b'10')
 
@@ -685,7 +709,7 @@ class WebClientTestCase(unittest.TestCase):
                 "With afterFoundGet, the HTTP method must change to GET")
 
         d = client.downloadPage(url, "downloadTemp",
-            followRedirect=True, afterFoundGet=True, method="POST")
+            followRedirect=True, afterFoundGet=True, method=b"POST")
         d.addCallback(gotPage)
         return d
 
@@ -704,33 +728,6 @@ class WebClientTestCase(unittest.TestCase):
             url, followRedirect=True, afterFoundGet=True, method=b"POST")
         d.addCallback(checkRedirectCount)
         return d
-
-
-    def testPartial(self):
-        name = self.mktemp()
-        f = open(name, "wb")
-        f.write(b"abcd")
-        f.close()
-
-        partialDownload = [(True, b"abcd456789"),
-                           (True, b"abcd456789"),
-                           (False, b"0123456789")]
-
-        d = defer.succeed(None)
-        for (partial, expectedData) in partialDownload:
-            d.addCallback(self._cbRunPartial, name, partial)
-            d.addCallback(self._cbPartialTest, expectedData, name)
-
-        return d
-
-    testPartial.skip = "Cannot test until webserver can serve partial data properly"
-
-    def _cbRunPartial(self, ignored, name, partial):
-        return client.downloadPage(self.getURL("file"), name, supportPartial=partial)
-
-    def _cbPartialTest(self, ignored, expectedData, filename):
-        bytes = file(filename, "rb").read()
-        self.assertEqual(bytes, expectedData)
 
 
     def test_downloadTimeout(self):
@@ -756,6 +753,25 @@ class WebClientTestCase(unittest.TestCase):
         return defer.gatherResults([
             self.assertFailure(first, defer.TimeoutError),
             self.assertFailure(second, defer.TimeoutError)])
+
+
+    def test_downloadTimeoutsWorkWithoutReading(self):
+        """
+        If the timeout indicated by the C{timeout} parameter to
+        L{client.HTTPDownloader.__init__} elapses without the complete response
+        being received, the L{defer.Deferred} returned by
+        L{client.downloadPage} fires with a L{Failure} wrapping a
+        L{defer.TimeoutError}, even if the remote peer isn't reading data from
+        the socket.
+        """
+        self.cleanupServerConnections = 1
+
+        # The timeout here needs to be slightly longer to give the resource a
+        # change to stop the reading.
+        d = client.downloadPage(
+            self.getURL("never-read"),
+            self.mktemp(), timeout=0.05)
+        return self.assertFailure(d, defer.TimeoutError)
 
 
     def test_downloadHeaders(self):
@@ -791,7 +807,7 @@ class WebClientTestCase(unittest.TestCase):
         def cbFinished(ignored):
             self.assertEqual(
                 FilePath(output).getContent(),
-                "[('foo', 'bar')]")
+                b"[('foo', 'bar')]")
         factory.deferred.addCallback(cbFinished)
         return factory.deferred
 
@@ -814,27 +830,46 @@ class WebClientTestCase(unittest.TestCase):
         d.addCallback(checkRedirectCount)
         return d
 
-    if _PY3:
-        for method in (
-            test_downloadPageBrokenDownload,
-            test_downloadPageLogsFileCloseError,
-            testDownloadPage,
-            testDownloadPageError1,
-            testDownloadPageError2,
-            testDownloadPageError3,
-            testDownloadServerError,
-            test_downloadAfterFoundGet,
-            testPartial,
-            test_downloadTimeout,
-            test_downloadHeaders,
-            test_downloadCookies,
-            test_downloadRedirectLimit):
-            method.skip = _PY3DownloadSkip
-        del method
+
+    def test_setURL(self):
+        """
+        L{client.HTTPClientFactory.setURL} alters the scheme, host, port and
+        path for absolute URLs.
+        """
+        url = b'http://example.com'
+        f = client.HTTPClientFactory(url)
+        self.assertEqual(
+            (url, b'http', b'example.com', 80, b'/'),
+            (f.url, f.scheme, f.host, f.port, f.path))
+
+
+    def test_setURLRemovesFragment(self):
+        """
+        L{client.HTTPClientFactory.setURL} removes the fragment identifier from
+        the path component.
+        """
+        f = client.HTTPClientFactory(b'http://example.com')
+        url = b'https://foo.com:8443/bar;123?a#frag'
+        f.setURL(url)
+        self.assertEqual(
+            (url, b'https', b'foo.com', 8443, b'/bar;123?a'),
+            (f.url, f.scheme, f.host, f.port, f.path))
+
+
+    def test_setURLRelativePath(self):
+        """
+        L{client.HTTPClientFactory.setURL} alters the path in a relative URL.
+        """
+        f = client.HTTPClientFactory(b'http://example.com')
+        url = b'/hello'
+        f.setURL(url)
+        self.assertEqual(
+            (url, b'http', b'example.com', 80, b'/hello'),
+            (f.url, f.scheme, f.host, f.port, f.path))
 
 
 
-class WebClientSSLTestCase(WebClientTestCase):
+class WebClientSSLTests(WebClientTests):
     def _listen(self, site):
         return reactor.listenSSL(
             0, site,
@@ -847,16 +882,19 @@ class WebClientSSLTestCase(WebClientTestCase):
 
     def testFactoryInfo(self):
         url = self.getURL('file')
-        scheme, host, port, path = client._parse(url)
+        uri = client.URI.fromBytes(url)
         factory = client.HTTPClientFactory(url)
-        reactor.connectSSL(nativeString(host), port, factory,
+        reactor.connectSSL(nativeString(uri.host), uri.port, factory,
                            ssl.ClientContextFactory())
         # The base class defines _cbFactoryInfo correctly for this
         return factory.deferred.addCallback(self._cbFactoryInfo, factory)
 
 
 
-class WebClientRedirectBetweenSSLandPlainText(unittest.TestCase):
+class WebClientRedirectBetweenSSLandPlainTextTests(unittest.TestCase):
+    suppress = [util.suppress(category=DeprecationWarning)]
+
+
     def getHTTPS(self, path):
         return networkString("https://127.0.0.1:%d/%s" % (self.tlsPortno, path))
 
@@ -864,8 +902,8 @@ class WebClientRedirectBetweenSSLandPlainText(unittest.TestCase):
         return networkString("http://127.0.0.1:%d/%s" % (self.plainPortno, path))
 
     def setUp(self):
-        plainRoot = Data(b'not me', b'text/plain')
-        tlsRoot = Data(b'me neither', b'text/plain')
+        plainRoot = Data(b'not me', 'text/plain')
+        tlsRoot = Data(b'me neither', 'text/plain')
 
         plainSite = server.Site(plainRoot, timeout=None)
         tlsSite = server.Site(tlsRoot, timeout=None)
@@ -883,7 +921,7 @@ class WebClientRedirectBetweenSSLandPlainText(unittest.TestCase):
         plainRoot.putChild(b'one', Redirect(self.getHTTPS('two')))
         tlsRoot.putChild(b'two', Redirect(self.getHTTP('three')))
         plainRoot.putChild(b'three', Redirect(self.getHTTPS('four')))
-        tlsRoot.putChild(b'four', Data(b'FOUND IT!', b'text/plain'))
+        tlsRoot.putChild(b'four', Data(b'FOUND IT!', 'text/plain'))
 
     def tearDown(self):
         ds = list(
@@ -897,12 +935,15 @@ class WebClientRedirectBetweenSSLandPlainText(unittest.TestCase):
             )
 
 
-class CookieTestCase(unittest.TestCase):
+class CookieTests(unittest.TestCase):
+    suppress = [util.suppress(category=DeprecationWarning)]
+
+
     def _listen(self, site):
         return reactor.listenTCP(0, site, interface="127.0.0.1")
 
     def setUp(self):
-        root = Data(b'El toro!', b'text/plain')
+        root = Data(b'El toro!', 'text/plain')
         root.putChild(b"cookiemirror", CookieMirrorResource())
         root.putChild(b"rawcookiemirror", RawCookieMirrorResource())
         site = server.Site(root, timeout=None)
@@ -950,6 +991,7 @@ class CookieTestCase(unittest.TestCase):
             b'Set-Cookie: CUSTOMER=WILE_E_COYOTE; path=/; expires=Wednesday, 09-Nov-99 23:12:40 GMT',
             b'Set-Cookie: PART_NUMBER=ROCKET_LAUNCHER_0001; path=/',
             b'Set-Cookie: SHIPPING=FEDEX; path=/foo',
+            b'Set-Cookie: HttpOnly;Secure',
             b'',
             b'body',
             b'more body',
@@ -969,11 +1011,13 @@ class CookieTestCase(unittest.TestCase):
 
 
 
-class TestHostHeader(unittest.TestCase):
+class HostHeaderTests(unittest.TestCase):
     """
     Test that L{HTTPClientFactory} includes the port in the host header
     if needed.
     """
+    suppress = [util.suppress(category=DeprecationWarning)]
+
 
     def _getHost(self, bytes):
         """
@@ -1062,9 +1106,727 @@ class TestHostHeader(unittest.TestCase):
 
 
 if ssl is None or not hasattr(ssl, 'DefaultOpenSSLContextFactory'):
-    for case in [WebClientSSLTestCase, WebClientRedirectBetweenSSLandPlainText]:
+    for case in [WebClientSSLTests, WebClientRedirectBetweenSSLandPlainTextTests]:
         case.skip = "OpenSSL not present"
 
 if not interfaces.IReactorSSL(reactor, None):
-    for case in [WebClientSSLTestCase, WebClientRedirectBetweenSSLandPlainText]:
+    for case in [WebClientSSLTests, WebClientRedirectBetweenSSLandPlainTextTests]:
         case.skip = "Reactor doesn't support SSL"
+
+
+
+class URITests:
+    """
+    Abstract tests for L{twisted.web.client.URI}.
+
+    Subclass this and L{unittest.TestCase}. Then provide a value for
+    C{host} and C{uriHost}.
+
+    @ivar host: A host specification for use in tests, must be L{bytes}.
+
+    @ivar uriHost: The host specification in URI form, must be a L{bytes}. In
+        most cases this is identical with C{host}. IPv6 address literals are an
+        exception, according to RFC 3986 section 3.2.2, as they need to be
+        enclosed in brackets. In this case this variable is different.
+    """
+
+    def makeURIString(self, template):
+        """
+        Replace the string "HOST" in C{template} with this test's host.
+
+        Byte strings Python between (and including) versions 3.0 and 3.4
+        cannot be formatted using C{%} or C{format} so this does a simple
+        replace.
+
+        @type template: L{bytes}
+        @param template: A string containing "HOST".
+
+        @rtype: L{bytes}
+        @return: A string where "HOST" has been replaced by C{self.host}.
+        """
+        self.assertIsInstance(self.host, bytes)
+        self.assertIsInstance(self.uriHost, bytes)
+        self.assertIsInstance(template, bytes)
+        self.assertIn(b"HOST", template)
+        return template.replace(b"HOST", self.uriHost)
+
+    def assertURIEquals(self, uri, scheme, netloc, host, port, path,
+                        params=b'', query=b'', fragment=b''):
+        """
+        Assert that all of a L{client.URI}'s components match the expected
+        values.
+
+        @param uri: U{client.URI} instance whose attributes will be checked
+            for equality.
+
+        @type scheme: L{bytes}
+        @param scheme: URI scheme specifier.
+
+        @type netloc: L{bytes}
+        @param netloc: Network location component.
+
+        @type host: L{bytes}
+        @param host: Host name.
+
+        @type port: L{int}
+        @param port: Port number.
+
+        @type path: L{bytes}
+        @param path: Hierarchical path.
+
+        @type params: L{bytes}
+        @param params: Parameters for last path segment, defaults to C{b''}.
+
+        @type query: L{bytes}
+        @param query: Query string, defaults to C{b''}.
+
+        @type fragment: L{bytes}
+        @param fragment: Fragment identifier, defaults to C{b''}.
+        """
+        self.assertEqual(
+            (scheme, netloc, host, port, path, params, query, fragment),
+            (uri.scheme, uri.netloc, uri.host, uri.port, uri.path, uri.params,
+             uri.query, uri.fragment))
+
+
+    def test_parseDefaultPort(self):
+        """
+        L{client.URI.fromBytes} by default assumes port 80 for the I{http}
+        scheme and 443 for the I{https} scheme.
+        """
+        uri = client.URI.fromBytes(self.makeURIString(b'http://HOST'))
+        self.assertEqual(80, uri.port)
+        # Weird (but commonly accepted) structure uses default port.
+        uri = client.URI.fromBytes(self.makeURIString(b'http://HOST:'))
+        self.assertEqual(80, uri.port)
+        uri = client.URI.fromBytes(self.makeURIString(b'https://HOST'))
+        self.assertEqual(443, uri.port)
+
+
+    def test_parseCustomDefaultPort(self):
+        """
+        L{client.URI.fromBytes} accepts a C{defaultPort} parameter that
+        overrides the normal default port logic.
+        """
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'http://HOST'), defaultPort=5144)
+        self.assertEqual(5144, uri.port)
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'https://HOST'), defaultPort=5144)
+        self.assertEqual(5144, uri.port)
+
+
+    def test_netlocHostPort(self):
+        """
+        Parsing a I{URI} splits the network location component into I{host} and
+        I{port}.
+        """
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'http://HOST:5144'))
+        self.assertEqual(5144, uri.port)
+        self.assertEqual(self.host, uri.host)
+        self.assertEqual(self.uriHost + b':5144', uri.netloc)
+
+        # Spaces in the hostname are trimmed, the default path is /.
+        uri = client.URI.fromBytes(self.makeURIString(b'http://HOST '))
+        self.assertEqual(self.uriHost, uri.netloc)
+
+
+    def test_path(self):
+        """
+        Parse the path from a I{URI}.
+        """
+        uri = self.makeURIString(b'http://HOST/foo/bar')
+        parsed = client.URI.fromBytes(uri)
+        self.assertURIEquals(
+            parsed,
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'/foo/bar')
+        self.assertEqual(uri, parsed.toBytes())
+
+
+    def test_noPath(self):
+        """
+        The path of a I{URI} that has no path is the empty string.
+        """
+        uri = self.makeURIString(b'http://HOST')
+        parsed = client.URI.fromBytes(uri)
+        self.assertURIEquals(
+            parsed,
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'')
+        self.assertEqual(uri, parsed.toBytes())
+
+
+    def test_emptyPath(self):
+        """
+        The path of a I{URI} with an empty path is C{b'/'}.
+        """
+        uri = self.makeURIString(b'http://HOST/')
+        self.assertURIEquals(
+            client.URI.fromBytes(uri),
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'/')
+
+
+    def test_param(self):
+        """
+        Parse I{URI} parameters from a I{URI}.
+        """
+        uri = self.makeURIString(b'http://HOST/foo/bar;param')
+        parsed = client.URI.fromBytes(uri)
+        self.assertURIEquals(
+            parsed,
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'/foo/bar',
+            params=b'param')
+        self.assertEqual(uri, parsed.toBytes())
+
+
+    def test_query(self):
+        """
+        Parse the query string from a I{URI}.
+        """
+        uri = self.makeURIString(b'http://HOST/foo/bar;param?a=1&b=2')
+        parsed = client.URI.fromBytes(uri)
+        self.assertURIEquals(
+            parsed,
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'/foo/bar',
+            params=b'param',
+            query=b'a=1&b=2')
+        self.assertEqual(uri, parsed.toBytes())
+
+
+    def test_fragment(self):
+        """
+        Parse the fragment identifier from a I{URI}.
+        """
+        uri = self.makeURIString(b'http://HOST/foo/bar;param?a=1&b=2#frag')
+        parsed = client.URI.fromBytes(uri)
+        self.assertURIEquals(
+            parsed,
+            scheme=b'http',
+            netloc=self.uriHost,
+            host=self.host,
+            port=80,
+            path=b'/foo/bar',
+            params=b'param',
+            query=b'a=1&b=2',
+            fragment=b'frag')
+        self.assertEqual(uri, parsed.toBytes())
+
+
+    def test_originForm(self):
+        """
+        L{client.URI.originForm} produces an absolute I{URI} path including
+        the I{URI} path.
+        """
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'http://HOST/foo'))
+        self.assertEqual(b'/foo', uri.originForm)
+
+
+    def test_originFormComplex(self):
+        """
+        L{client.URI.originForm} produces an absolute I{URI} path including
+        the I{URI} path, parameters and query string but excludes the fragment
+        identifier.
+        """
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'http://HOST/foo;param?a=1#frag'))
+        self.assertEqual(b'/foo;param?a=1', uri.originForm)
+
+
+    def test_originFormNoPath(self):
+        """
+        L{client.URI.originForm} produces a path of C{b'/'} when the I{URI}
+        specifies no path.
+        """
+        uri = client.URI.fromBytes(self.makeURIString(b'http://HOST'))
+        self.assertEqual(b'/', uri.originForm)
+
+
+    def test_originFormEmptyPath(self):
+        """
+        L{client.URI.originForm} produces a path of C{b'/'} when the I{URI}
+        specifies an empty path.
+        """
+        uri = client.URI.fromBytes(
+            self.makeURIString(b'http://HOST/'))
+        self.assertEqual(b'/', uri.originForm)
+
+
+    def test_externalUnicodeInterference(self):
+        """
+        L{client.URI.fromBytes} parses the scheme, host, and path elements
+        into L{bytes}, even when passed an URL which has previously been passed
+        to L{urlparse} as a L{unicode} string.
+        """
+        goodInput = self.makeURIString(b'http://HOST/path')
+        badInput = goodInput.decode('ascii')
+        urlparse(badInput)
+        uri = client.URI.fromBytes(goodInput)
+        self.assertIsInstance(uri.scheme, bytes)
+        self.assertIsInstance(uri.host, bytes)
+        self.assertIsInstance(uri.path, bytes)
+
+
+
+class URITestsForHostname(URITests, unittest.TestCase):
+    """
+    Tests for L{twisted.web.client.URI} with host names.
+    """
+
+    uriHost = host = b"example.com"
+
+
+
+class URITestsForIPv4(URITests, unittest.TestCase):
+    """
+    Tests for L{twisted.web.client.URI} with IPv4 host addresses.
+    """
+
+    uriHost = host = b"192.168.1.67"
+
+
+
+class URITestsForIPv6(URITests, unittest.TestCase):
+    """
+    Tests for L{twisted.web.client.URI} with IPv6 host addresses.
+
+    IPv6 addresses must always be surrounded by square braces in URIs. No
+    attempt is made to test without.
+    """
+
+    host = b"fe80::20c:29ff:fea4:c60"
+    uriHost = b"[fe80::20c:29ff:fea4:c60]"
+
+
+    def test_hostBracketIPv6AddressLiteral(self):
+        """
+        Brackets around IPv6 addresses are stripped in the host field. The host
+        field is then exported with brackets in the output of
+        L{client.URI.toBytes}.
+        """
+        uri = client.URI.fromBytes(b"http://[::1]:80/index.html")
+
+        self.assertEqual(uri.host, b"::1")
+        self.assertEqual(uri.netloc, b"[::1]:80")
+        self.assertEqual(uri.toBytes(), b'http://[::1]:80/index.html')
+
+
+
+class DeprecationTests(unittest.TestCase):
+    """
+    Tests that L{client.getPage} and friends are deprecated.
+    """
+
+    def test_getPageDeprecated(self):
+        """
+        L{client.getPage} is deprecated.
+        """
+        port = reactor.listenTCP(
+            0, server.Site(Data(b'', 'text/plain')), interface="127.0.0.1")
+        portno = port.getHost().port
+        self.addCleanup(port.stopListening)
+        url = networkString("http://127.0.0.1:%d" % (portno,))
+
+        d = client.getPage(url)
+        warningInfo = self.flushWarnings([self.test_getPageDeprecated])
+        self.assertEqual(len(warningInfo), 1)
+        self.assertEqual(warningInfo[0]['category'], DeprecationWarning)
+        self.assertEqual(
+            warningInfo[0]['message'],
+            "twisted.web.client.getPage was deprecated in "
+            "Twisted 16.7.0; please use https://pypi.org/project/treq/ or twisted.web.client.Agent instead")
+
+        return d.addErrback(lambda _: None)
+
+
+    def test_downloadPageDeprecated(self):
+        """
+        L{client.downloadPage} is deprecated.
+        """
+        port = reactor.listenTCP(
+            0, server.Site(Data(b'', 'text/plain')), interface="127.0.0.1")
+        portno = port.getHost().port
+        self.addCleanup(port.stopListening)
+        url = networkString("http://127.0.0.1:%d" % (portno,))
+
+        path = FilePath(self.mktemp())
+        d = client.downloadPage(url, path.path)
+
+        warningInfo = self.flushWarnings([self.test_downloadPageDeprecated])
+        self.assertEqual(len(warningInfo), 1)
+        self.assertEqual(warningInfo[0]['category'], DeprecationWarning)
+        self.assertEqual(
+            warningInfo[0]['message'],
+            "twisted.web.client.downloadPage was deprecated in "
+            "Twisted 16.7.0; please use https://pypi.org/project/treq/ or twisted.web.client.Agent instead")
+
+        return d.addErrback(lambda _: None)
+
+
+    def _testDeprecatedClass(self, klass):
+        """
+        Assert that accessing the given class was deprecated.
+
+        @param klass: The class being deprecated.
+        @type klass: L{str}
+        """
+        getattr(client, klass)
+
+        warningInfo = self.flushWarnings()
+        self.assertEqual(len(warningInfo), 1)
+        self.assertEqual(warningInfo[0]['category'], DeprecationWarning)
+        self.assertEqual(
+            warningInfo[0]['message'],
+            "twisted.web.client.{} was deprecated in "
+            "Twisted 16.7.0: please use https://pypi.org/project/treq/ or twisted.web.client.Agent instead".format(klass))
+
+
+    def test_httpPageGetterDeprecated(self):
+        """
+        L{client.HTTPPageGetter} is deprecated.
+        """
+        self._testDeprecatedClass("HTTPPageGetter")
+
+
+    def test_httpPageDownloaderDeprecated(self):
+        """
+        L{client.HTTPPageDownloader} is deprecated.
+        """
+        self._testDeprecatedClass("HTTPPageDownloader")
+
+
+    def test_httpClientFactoryDeprecated(self):
+        """
+        L{client.HTTPClientFactory} is deprecated.
+        """
+        self._testDeprecatedClass("HTTPClientFactory")
+
+
+    def test_httpDownloaderDeprecated(self):
+        """
+        L{client.HTTPDownloader} is deprecated.
+        """
+        self._testDeprecatedClass("HTTPDownloader")
+
+
+
+class GetPageMethodInjectionTests(
+        MethodInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.getPage} against HTTP method injections.
+    """
+
+    def attemptRequestWithMaliciousMethod(self, method):
+        """
+        Attempt a request with the provided method.
+
+        @param method: see L{MethodInjectionTestsMixin}
+        """
+        uri = b'http://twisted.invalid'
+        client.getPage(uri, method=method)
+
+
+
+class GetPageURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.getPage} against URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: see L{URIInjectionTestsMixin}
+        """
+        client.getPage(uri)
+
+
+
+class DownloadPageMethodInjectionTests(
+        MethodInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.getPage} against HTTP method injections.
+    """
+
+    def attemptRequestWithMaliciousMethod(self, method):
+        """
+        Attempt a request with the provided method.
+
+        @param method: see L{MethodInjectionTestsMixin}
+        """
+        uri = b'http://twisted.invalid'
+        client.downloadPage(uri, file=io.BytesIO(), method=method)
+
+
+
+class DownloadPageURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.downloadPage} against URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: see L{URIInjectionTestsMixin}
+        """
+        client.downloadPage(uri, file=io.BytesIO())
+
+
+
+def makeHTTPPageGetterFactory(protocolClass, method, host, path):
+    """
+    Make a L{ClientFactory} that can be used with
+    L{client.HTTPPageGetter} and its subclasses.
+
+    @param protocolClass: The protocol class
+    @type protocolClass: A subclass of L{client.HTTPPageGetter}
+
+    @param method: the HTTP method
+
+    @param host: the host
+
+    @param path: The URI path
+
+    @return: A L{ClientFactory}.
+    """
+    factory = ClientFactory.forProtocol(protocolClass)
+
+    factory.method = method
+    factory.host = host
+    factory.path = path
+
+    factory.scheme = b"http"
+    factory.port = 0
+    factory.headers = {}
+    factory.agent = b"User/Agent"
+    factory.cookies = {}
+
+    return factory
+
+
+
+class HTTPPageGetterMethodInjectionTests(
+        MethodInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.HTTPPageGetter} against HTTP method injections.
+    """
+    protocolClass = client.HTTPPageGetter
+
+    def attemptRequestWithMaliciousMethod(self, method):
+        """
+        Attempt a request with the provided method.
+
+        @param method: L{MethodInjectionTestsMixin}
+        """
+        transport = StringTransport()
+        factory = makeHTTPPageGetterFactory(
+            self.protocolClass,
+            method=method,
+            host=b"twisted.invalid",
+            path=b"/",
+        )
+        getter = factory.buildProtocol(
+            address.IPv4Address("TCP", "127.0.0.1", 0),
+        )
+        getter.makeConnection(transport)
+
+
+
+class HTTPPageGetterURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Test L{client.HTTPPageGetter} against HTTP URI injections.
+    """
+    protocolClass = client.HTTPPageGetter
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: L{URIInjectionTestsMixin}
+        """
+        transport = StringTransport()
+        # Setting the host and path to the same value is imprecise but
+        # doesn't require parsing an invalid URI.
+        factory = makeHTTPPageGetterFactory(
+            self.protocolClass,
+            method=b"GET",
+            host=uri,
+            path=uri,
+        )
+        getter = factory.buildProtocol(
+            address.IPv4Address("TCP", "127.0.0.1", 0),
+        )
+        getter.makeConnection(transport)
+
+
+
+class HTTPPageDownloaderMethodInjectionTests(
+        HTTPPageGetterMethodInjectionTests
+):
+
+    """
+    Test L{client.HTTPPageDownloader} against HTTP method injections.
+    """
+    protocolClass = client.HTTPPageDownloader
+
+
+
+class HTTPPageDownloaderURIInjectionTests(
+        HTTPPageGetterURIInjectionTests
+):
+    """
+    Test L{client.HTTPPageDownloader} against HTTP URI injections.
+    """
+    protocolClass = client.HTTPPageDownloader
+
+
+
+class HTTPClientFactoryMethodInjectionTests(
+        MethodInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPClientFactory} against HTTP method injections.
+    """
+
+    def attemptRequestWithMaliciousMethod(self, method):
+        """
+        Attempt a request with the provided method.
+
+        @param method: L{MethodInjectionTestsMixin}
+        """
+        client.HTTPClientFactory(b"https://twisted.invalid", method)
+
+
+
+class HTTPClientFactoryURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPClientFactory} against HTTP URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: L{URIInjectionTestsMixin}
+        """
+        client.HTTPClientFactory(uri)
+
+
+
+class HTTPClientFactorySetURLURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPClientFactory.setURL} against HTTP URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: L{URIInjectionTestsMixin}
+        """
+        client.HTTPClientFactory(b"https://twisted.invalid").setURL(uri)
+
+
+
+class HTTPDownloaderMethodInjectionTests(
+        MethodInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPDownloader} against HTTP method injections.
+    """
+
+    def attemptRequestWithMaliciousMethod(self, method):
+        """
+        Attempt a request with the provided method.
+
+        @param method: L{MethodInjectionTestsMixin}
+        """
+        client.HTTPDownloader(
+            b"https://twisted.invalid",
+            io.BytesIO(),
+            method=method,
+        )
+
+
+
+class HTTPDownloaderURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPDownloader} against HTTP URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: L{URIInjectionTestsMixin}
+        """
+        client.HTTPDownloader(uri, io.BytesIO())
+
+
+
+class HTTPDownloaderSetURLURIInjectionTests(
+        URIInjectionTestsMixin,
+        unittest.SynchronousTestCase,
+):
+    """
+    Tests L{client.HTTPDownloader.setURL} against HTTP URI injections.
+    """
+
+    def attemptRequestWithMaliciousURI(self, uri):
+        """
+        Attempt a request with the provided URI.
+
+        @param uri: L{URIInjectionTestsMixin}
+        """
+        downloader = client.HTTPDownloader(
+            b"https://twisted.invalid",
+            io.BytesIO(),
+        )
+        downloader.setURL(uri)

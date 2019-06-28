@@ -7,9 +7,11 @@ Implements a simple polling interface for file descriptors that don't work with
 select() - this is pretty much only useful on Windows.
 """
 
-from zope.interface import implements
+from __future__ import absolute_import, division
 
+from zope.interface import implementer
 from twisted.internet.interfaces import IConsumer, IPushProducer
+from twisted.python.compat import unicode
 
 
 MIN_TIMEOUT = 0.000000001
@@ -103,9 +105,8 @@ import win32file
 import win32api
 import pywintypes
 
+@implementer(IPushProducer)
 class _PollableReadPipe(_PollableResource):
-
-    implements(IPushProducer)
 
     def __init__(self, pipe, receivedCallback, lostCallback):
         # security attributes for pipes
@@ -129,7 +130,7 @@ class _PollableReadPipe(_PollableResource):
                 finished = 1
                 break
 
-        dataBuf = ''.join(fullDataRead)
+        dataBuf = b''.join(fullDataRead)
         if dataBuf:
             self.receivedCallback(dataBuf)
         if finished:
@@ -159,14 +160,13 @@ class _PollableReadPipe(_PollableResource):
 
 FULL_BUFFER_SIZE = 64 * 1024
 
+@implementer(IConsumer)
 class _PollableWritePipe(_PollableResource):
-
-    implements(IConsumer)
 
     def __init__(self, writePipe, lostCallback):
         self.disconnecting = False
         self.producer = None
-        self.producerPaused = 0
+        self.producerPaused = False
         self.streamingProducer = 0
         self.outQueue = []
         self.writePipe = writePipe
@@ -185,13 +185,13 @@ class _PollableWritePipe(_PollableResource):
 
     def bufferFull(self):
         if self.producer is not None:
-            self.producerPaused = 1
+            self.producerPaused = True
             self.producer.pauseProducing()
 
     def bufferEmpty(self):
         if self.producer is not None and ((not self.streamingProducer) or
                                           self.producerPaused):
-            self.producer.producerPaused = 0
+            self.producer.producerPaused = False
             self.producer.resumeProducing()
             return True
         return False
@@ -274,7 +274,7 @@ class _PollableWritePipe(_PollableResource):
                 self.writeConnectionLost()
                 return 0
             try:
-                win32file.WriteFile(self.writePipe, '', None)
+                win32file.WriteFile(self.writePipe, b'', None)
             except pywintypes.error:
                 self.writeConnectionLost()
                 return numBytesWritten

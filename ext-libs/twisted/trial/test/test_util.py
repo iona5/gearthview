@@ -12,7 +12,7 @@ import os, sys
 
 from zope.interface import implementer
 
-from twisted.python.compat import _PY3, NativeStringIO
+from twisted.python.compat import NativeStringIO
 from twisted.python import filepath
 from twisted.internet.interfaces import IProcessTransport
 from twisted.internet import defer
@@ -24,11 +24,10 @@ from twisted.trial import util
 from twisted.trial.util import (
     DirtyReactorAggregateError, _Janitor, excInfoOrFailureToExcInfo,
     acquireAttribute)
-from twisted.trial.test import suppression
 
 
 
-class TestMktemp(SynchronousTestCase):
+class MktempTests(SynchronousTestCase):
     """
     Tests for L{TestCase.mktemp}, a helper function for creating temporary file
     or directory names.
@@ -41,7 +40,7 @@ class TestMktemp(SynchronousTestCase):
         name = self.mktemp()
         dirs = os.path.dirname(name).split(os.sep)[:-1]
         self.assertEqual(
-            dirs, ['twisted.trial.test.test_util', 'TestMktemp', 'test_name'])
+            dirs, ['twisted.trial.test.test_util', 'MktempTests', 'test_name'])
 
 
     def test_unique(self):
@@ -71,32 +70,7 @@ class TestMktemp(SynchronousTestCase):
 
 
 
-class TestIntrospection(SynchronousTestCase):
-    def test_containers(self):
-        """
-        When pased a test case, L{util.getPythonContainers} returns a list
-        including the test case and the module the test case is defined in.
-        """
-        parents = util.getPythonContainers(
-            suppression.SynchronousTestSuppression2.testSuppressModule)
-        expected = [suppression.SynchronousTestSuppression2, suppression]
-        for a, b in zip(parents, expected):
-            self.assertEqual(a, b)
-        # Also, the function is deprecated.
-        warnings = self.flushWarnings([self.test_containers])
-        self.assertEqual(DeprecationWarning, warnings[0]['category'])
-        self.assertEqual(
-            "twisted.trial.util.getPythonContainers was deprecated in "
-            "Twisted 12.3.0: This function never worked correctly.  "
-            "Implement lookup on your own.",
-            warnings[0]['message'])
-        self.assertEqual(1, len(warnings))
-    if _PY3:
-        test_containers.skip = "getPythonContainers is unsupported on Python 3."
-
-
-
-class TestRunSequentially(SynchronousTestCase):
+class RunSequentiallyTests(SynchronousTestCase):
     """
     Sometimes it is useful to be able to run an arbitrary list of callables,
     one after the other.
@@ -225,7 +199,7 @@ class TestRunSequentially(SynchronousTestCase):
 
 
 
-class DirtyReactorAggregateErrorTest(SynchronousTestCase):
+class DirtyReactorAggregateErrorTests(SynchronousTestCase):
     """
     Tests for the L{DirtyReactorAggregateError}.
     """
@@ -681,3 +655,100 @@ class AcquireAttributeTests(SynchronousTestCase):
         """
         default = object()
         self.assertTrue(default is acquireAttribute([object()], "foo", default))
+
+
+
+class ListToPhraseTests(SynchronousTestCase):
+    """
+    Input is transformed into a string representation of the list,
+    with each item separated by delimiter (defaulting to a comma) and the final
+    two being separated by a final delimiter.
+    """
+
+    def test_empty(self):
+        """
+        If things is empty, an empty string is returned.
+        """
+        sample = []
+        expected = ''
+        result = util._listToPhrase(sample, 'and')
+        self.assertEqual(expected, result)
+
+
+    def test_oneWord(self):
+        """
+        With a single item, the item is returned.
+        """
+        sample = ['One']
+        expected = 'One'
+        result = util._listToPhrase(sample, 'and')
+        self.assertEqual(expected, result)
+
+
+    def test_twoWords(self):
+        """
+        Two words are separated by the final delimiter.
+        """
+        sample = ['One', 'Two']
+        expected = 'One and Two'
+        result = util._listToPhrase(sample, 'and')
+        self.assertEqual(expected, result)
+
+
+    def test_threeWords(self):
+        """
+        With more than two words, the first two are separated by the delimiter.
+        """
+        sample = ['One', 'Two', 'Three']
+        expected = 'One, Two, and Three'
+        result = util._listToPhrase(sample, 'and')
+        self.assertEqual(expected, result)
+
+
+    def test_fourWords(self):
+        """
+        If a delimiter is specified, it is used instead of the default comma.
+        """
+        sample = ['One', 'Two', 'Three', 'Four']
+        expected = 'One; Two; Three; or Four'
+        result = util._listToPhrase(sample, 'or', delimiter='; ')
+        self.assertEqual(expected, result)
+
+
+    def test_notString(self):
+        """
+        If something in things is not a string, it is converted into one.
+        """
+        sample = [1, 2, 'three']
+        expected = '1, 2, and three'
+        result = util._listToPhrase(sample, 'and')
+        self.assertEqual(expected, result)
+
+
+    def test_stringTypeError(self):
+        """
+        If things is a string, a TypeError is raised.
+        """
+        sample = "One, two, three"
+        error = self.assertRaises(TypeError, util._listToPhrase, sample, 'and')
+        self.assertEqual(str(error), "Things must be a list or a tuple")
+
+
+    def test_iteratorTypeError(self):
+        """
+        If things is an iterator, a TypeError is raised.
+        """
+        sample = iter([1, 2, 3])
+        error = self.assertRaises(TypeError, util._listToPhrase, sample, 'and')
+        self.assertEqual(str(error), "Things must be a list or a tuple")
+
+
+    def test_generatorTypeError(self):
+        """
+        If things is a generator, a TypeError is raised.
+        """
+        def sample():
+            for i in range(2):
+                yield i
+        error = self.assertRaises(TypeError, util._listToPhrase, sample, 'and')
+        self.assertEqual(str(error), "Things must be a list or a tuple")

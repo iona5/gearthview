@@ -79,6 +79,14 @@ class _LoopbackTransport(object):
         self.q.disconnect = True
         self.q.put(None)
 
+
+    def abortConnection(self):
+        """
+        Abort the connection. Same as L{loseConnection}.
+        """
+        self.loseConnection()
+
+
     def getPeer(self):
         return _LoopbackAddress()
 
@@ -157,7 +165,7 @@ def loopbackAsync(server, client, pumpPolicy=identityPumpPolicy):
         contains to the given protocol's C{dataReceived} method.  The signature
         of C{pumpPolicy} is C{(queue, protocol)}.  C{queue} is an object with a
         C{get} method which will return the next string written to the
-        transport, or C{None} if the transport has been disconnected, and which
+        transport, or L{None} if the transport has been disconnected, and which
         evaluates to C{True} if and only if there are more items to be
         retrieved via C{get}.
 
@@ -263,7 +271,7 @@ def _loopbackAsyncContinue(ignored, server, serverToClient, client,
 
 @implementer(interfaces.ITransport, interfaces.IConsumer)
 class LoopbackRelay:
-    buffer = ''
+    buffer = b''
     shouldLose = 0
     disconnecting = 0
     producer = None
@@ -278,7 +286,7 @@ class LoopbackRelay:
             self.logFile.write("loopback writing %s\n" % repr(data))
 
     def writeSequence(self, iovec):
-        self.write("".join(iovec))
+        self.write(b"".join(iovec))
 
     def clearBuffer(self):
         if self.shouldLose == -1:
@@ -290,7 +298,7 @@ class LoopbackRelay:
             if self.logFile:
                 self.logFile.write("loopback receiving %s\n" % repr(self.buffer))
             buffer = self.buffer
-            self.buffer = ''
+            self.buffer = b''
             self.target.dataReceived(buffer)
         if self.shouldLose == 1:
             self.shouldLose = -1

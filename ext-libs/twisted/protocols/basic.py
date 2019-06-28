@@ -19,8 +19,8 @@ from zope.interface import implementer
 
 # Twisted imports
 from twisted.python.compat import _PY3
-from twisted.internet import protocol, defer, interfaces, error
-from twisted.python import log, deprecate, versions
+from twisted.internet import protocol, defer, interfaces
+from twisted.python import log
 
 
 # Unfortunately we cannot use regular string formatting on Python 3; see
@@ -38,16 +38,6 @@ Convert some C{bytes} into netstring format.
 """
 
 
-
-LENGTH, DATA, COMMA = range(3)
-NUMBER = re.compile(b'(\d*)(:?)')
-
-deprecatedSince = versions.Version("Twisted", 10, 2, 0)
-message = "NetstringReceiver parser state is private."
-for attr in ["LENGTH", "DATA", "COMMA", "NUMBER"]:
-    deprecate.deprecatedModuleAttribute(
-        deprecatedSince, message, __name__, attr)
-del deprecatedSince, message, attr
 
 DEBUG = 0
 
@@ -260,7 +250,7 @@ class NetstringReceiver(protocol.Protocol):
         equal to C{self.MAX_LENGTH}.
 
         @raise NetstringParseError: if C{self._remainingData} is no
-            number or is too big (checked by L{extractLength}).
+            number or is too big (checked by L{_extractLength}).
         """
         partialLengthMatch = self._LENGTH_PREFIX.match(self._remainingData)
         if not partialLengthMatch:
@@ -491,7 +481,7 @@ class LineOnlyReceiver(protocol.Protocol):
         Called when the maximum line length has been reached.
         Override if it needs to be dealt with in some special way.
         """
-        return error.ConnectionLost('Line length exceeded')
+        return self.transport.loseConnection()
 
 
 
@@ -521,8 +511,8 @@ class LineReceiver(protocol.Protocol, _PauseableMixin):
 
     In line mode, each line that's received becomes a callback to
     L{lineReceived}.  In raw data mode, each chunk of raw data becomes a
-    callback to L{rawDataReceived}.  The L{setLineMode} and L{setRawMode}
-    methods switch between the two modes.
+    callback to L{LineReceiver.rawDataReceived}.
+    The L{setLineMode} and L{setRawMode} methods switch between the two modes.
 
     This is useful for line-oriented protocols such as IRC, HTTP, POP, etc.
 
@@ -568,14 +558,15 @@ class LineReceiver(protocol.Protocol, _PauseableMixin):
                         line, self._buffer = self._buffer.split(
                             self.delimiter, 1)
                     except ValueError:
-                        if len(self._buffer) > self.MAX_LENGTH:
+                        if len(self._buffer) >= (self.MAX_LENGTH
+                                                 + len(self.delimiter)):
                             line, self._buffer = self._buffer, b''
                             return self.lineLengthExceeded(line)
                         return
                     else:
                         lineLength = len(line)
                         if lineLength > self.MAX_LENGTH:
-                            exceeded = line + self._buffer
+                            exceeded = line + self.delimiter + self._buffer
                             self._buffer = b''
                             return self.lineLengthExceeded(exceeded)
                         why = self.lineReceived(line)

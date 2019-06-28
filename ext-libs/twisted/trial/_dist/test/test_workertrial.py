@@ -7,12 +7,14 @@ Tests for L{twisted.trial._dist.workertrial}.
 
 import errno
 import sys
-from cStringIO import StringIO
+import os
+
+from io import BytesIO
 
 from twisted.protocols.amp import AMP
 from twisted.test.proto_helpers import StringTransport
 from twisted.trial.unittest import TestCase
-from twisted.trial._dist.workertrial import WorkerLogObserver, main
+from twisted.trial._dist.workertrial import WorkerLogObserver, main, _setupPath
 from twisted.trial._dist import (
     workertrial, _WORKER_AMP_STDIN, _WORKER_AMP_STDOUT, workercommands,
     managercommands)
@@ -26,7 +28,7 @@ class FakeAMP(AMP):
 
 
 
-class WorkerLogObserverTestCase(TestCase):
+class WorkerLogObserverTests(TestCase):
     """
     Tests for L{WorkerLogObserver}.
     """
@@ -49,14 +51,14 @@ class WorkerLogObserverTestCase(TestCase):
 
 
 
-class MainTestCase(TestCase):
+class MainTests(TestCase):
     """
     Tests for L{main}.
     """
 
     def setUp(self):
-        self.readStream = StringIO()
-        self.writeStream = StringIO()
+        self.readStream = BytesIO()
+        self.writeStream = BytesIO()
         self.patch(workertrial, 'startLoggingWithObserver',
                    self.startLoggingWithObserver)
         self.addCleanup(setattr, sys, "argv", sys.argv)
@@ -69,10 +71,10 @@ class MainTestCase(TestCase):
         the stdin fd and C{self.writeStream} for the stdout fd.
         """
         if fd == _WORKER_AMP_STDIN:
-            self.assertIdentical(None, mode)
+            self.assertIdentical('rb', mode)
             return self.readStream
         elif fd == _WORKER_AMP_STDOUT:
-            self.assertEqual('w', mode)
+            self.assertEqual('wb', mode)
             return self.writeStream
         else:
             raise AssertionError("Unexpected fd %r" % (fd,))
@@ -90,7 +92,7 @@ class MainTestCase(TestCase):
         If no data is ever written, L{main} exits without writing data out.
         """
         main(self.fdopen)
-        self.assertEqual('', self.writeStream.getvalue())
+        self.assertEqual(b'', self.writeStream.getvalue())
 
 
     def test_forwardCommand(self):
@@ -106,7 +108,7 @@ class MainTestCase(TestCase):
         self.readStream.seek(0, 0)
         main(self.fdopen)
         self.assertIn(
-            "No module named 'doesntexist'", self.writeStream.getvalue())
+            b"No module named 'doesntexist'", self.writeStream.getvalue())
 
 
     def test_readInterrupted(self):
@@ -125,11 +127,11 @@ class MainTestCase(TestCase):
                     raise IOError(errno.EINTR)
                 else:
                     excInfos.append(sys.exc_info())
-                return ''
+                return b''
 
         self.readStream = FakeStream()
         main(self.fdopen)
-        self.assertEqual('', self.writeStream.getvalue())
+        self.assertEqual(b'', self.writeStream.getvalue())
         self.assertEqual([(None, None, None)], excInfos)
 
 
@@ -150,3 +152,33 @@ class MainTestCase(TestCase):
 
         self.readStream = FakeStream()
         self.assertRaises(IOError, main, self.fdopen)
+
+
+
+class SetupPathTests(TestCase):
+    """
+    Tests for L{_setupPath} C{sys.path} manipulation.
+    """
+
+    def setUp(self):
+        self.addCleanup(setattr, sys, "path", sys.path[:])
+
+
+    def test_overridePath(self):
+        """
+        L{_setupPath} overrides C{sys.path} if B{TRIAL_PYTHONPATH} is specified
+        in the environment.
+        """
+        environ = {"TRIAL_PYTHONPATH": os.pathsep.join(["foo", "bar"])}
+        _setupPath(environ)
+        self.assertEqual(["foo", "bar"], sys.path)
+
+
+    def test_noVariable(self):
+        """
+        L{_setupPath} doesn't change C{sys.path} if B{TRIAL_PYTHONPATH} is not
+        present in the environment.
+        """
+        originalPath = sys.path[:]
+        _setupPath({})
+        self.assertEqual(originalPath, sys.path)

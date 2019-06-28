@@ -13,8 +13,9 @@ from unittest import TestResult
 
 from twisted.python.compat import NativeStringIO as StringIO
 from twisted.python.filepath import FilePath
-from twisted.trial.unittest import (
-    SynchronousTestCase, _collectWarnings, _setWarningRegistryToNone)
+from twisted.trial.unittest import SynchronousTestCase
+from twisted.trial._synctest import _collectWarnings, _setWarningRegistryToNone
+
 
 class Mask(object):
     """
@@ -375,11 +376,13 @@ class CollectWarningsTests(SynchronousTestCase):
         """
         firstMessage = "dummy calls observer warning"
         secondMessage = firstMessage[::-1]
+        thirdMessage = Warning(1, 2, 3)
         events = []
         def f():
             events.append('call')
             warnings.warn(firstMessage)
             warnings.warn(secondMessage)
+            warnings.warn(thirdMessage)
             events.append('returning')
 
         _collectWarnings(events.append, f)
@@ -387,8 +390,9 @@ class CollectWarningsTests(SynchronousTestCase):
         self.assertEqual(events[0], 'call')
         self.assertEqual(events[1].message, firstMessage)
         self.assertEqual(events[2].message, secondMessage)
-        self.assertEqual(events[3], 'returning')
-        self.assertEqual(len(events), 4)
+        self.assertEqual(events[3].message, str(thirdMessage))
+        self.assertEqual(events[4], 'returning')
+        self.assertEqual(len(events), 5)
 
 
     def test_suppresses(self):
@@ -460,7 +464,7 @@ class CollectWarningsTests(SynchronousTestCase):
         """
         If the dictionary passed to L{_setWarningRegistryToNone} changes size
         partway through the process, C{_setWarningRegistryToNone} continues to
-        set C{__warningregistry__} to C{None} on the rest of the values anyway.
+        set C{__warningregistry__} to L{None} on the rest of the values anyway.
 
 
         This might be caused by C{sys.modules} containing something that's not

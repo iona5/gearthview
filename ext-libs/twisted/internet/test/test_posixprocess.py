@@ -5,6 +5,8 @@
 Tests for POSIX-based L{IReactorProcess} implementations.
 """
 
+from __future__ import division, absolute_import
+
 import errno, os, sys
 
 try:
@@ -15,6 +17,7 @@ else:
     from twisted.internet import process
     platformSkip = None
 
+from twisted.python.compat import range
 from twisted.trial.unittest import TestCase
 
 
@@ -29,6 +32,14 @@ class FakeFile(object):
 
     def close(self):
         self.testcase._files.remove(self.fd)
+
+
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
 
 
 
@@ -179,7 +190,7 @@ class FDDetectorTests(TestCase):
         self.detector._implementations = [
             failWithException, failWithWrongResults, correct]
 
-        self.assertIdentical(correct, self.detector._getImplementation())
+        self.assertIs(correct, self.detector._getImplementation())
 
 
     def test_selectLast(self):
@@ -197,7 +208,7 @@ class FDDetectorTests(TestCase):
         self.detector._implementations = [
             failWithWrongResults, failWithOtherWrongResults]
 
-        self.assertIdentical(
+        self.assertIs(
             failWithOtherWrongResults, self.detector._getImplementation())
 
 
@@ -211,11 +222,11 @@ class FDDetectorTests(TestCase):
         # Create a new instance
         detector = process._FDDetector()
 
-        first = detector._listOpenFDs.func_name
+        first = detector._listOpenFDs.__name__
         detector._listOpenFDs()
-        second = detector._listOpenFDs.func_name
+        second = detector._listOpenFDs.__name__
         detector._listOpenFDs()
-        third = detector._listOpenFDs.func_name
+        third = detector._listOpenFDs.__name__
 
         self.assertNotEqual(first, second)
         self.assertEqual(second, third)
@@ -249,18 +260,18 @@ class FDDetectorTests(TestCase):
     def test_resourceFDImplementation(self):
         """
         L{_FDDetector._fallbackFDImplementation} uses the L{resource} module if
-        it is available, returning a range of integers from 0 to the the
+        it is available, returning a range of integers from 0 to the
         minimum of C{1024} and the hard I{NOFILE} limit.
         """
         # When the resource module is here, use its value.
         self.revealResourceModule(512)
         self.assertEqual(
-            range(512), self.detector._fallbackFDImplementation())
+            list(range(512)), list(self.detector._fallbackFDImplementation()))
 
         # But limit its value to the arbitrarily selected value 1024.
         self.revealResourceModule(2048)
         self.assertEqual(
-            range(1024), self.detector._fallbackFDImplementation())
+            list(range(1024)), list(self.detector._fallbackFDImplementation()))
 
 
     def test_fallbackFDImplementation(self):
@@ -270,7 +281,8 @@ class FDDetectorTests(TestCase):
         L{resource} module is not importable.
         """
         self.hideResourceModule()
-        self.assertEqual(range(1024), self.detector._fallbackFDImplementation())
+        self.assertEqual(list(range(1024)),
+                         list(self.detector._fallbackFDImplementation()))
 
 
 
@@ -290,7 +302,7 @@ class FileDescriptorTests(TestCase):
         for fd in process._listOpenFDs():
             try:
                 fcntl.fcntl(fd, fcntl.F_GETFL)
-            except IOError, err:
+            except IOError as err:
                 self.assertEqual(
                     errno.EBADF, err.errno,
                     "fcntl(%d, F_GETFL) failed with unexpected errno %d" % (
@@ -308,7 +320,7 @@ class FileDescriptorTests(TestCase):
         # their presence or absence in the result.
 
         # Expect a file we just opened to be listed.
-        f = file(os.devnull)
+        f = open(os.devnull)
         openfds = process._listOpenFDs()
         self.assertIn(f.fileno(), openfds)
 

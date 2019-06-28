@@ -8,8 +8,12 @@ Tests for L{twisted.python.util}.
 
 from __future__ import division, absolute_import
 
-import os.path, sys
-import shutil, errno, warnings
+import errno
+import os.path
+import shutil
+import sys
+import warnings
+
 try:
     import pwd, grp
 except ImportError:
@@ -18,33 +22,28 @@ except ImportError:
 from twisted.trial import unittest
 from twisted.trial.util import suppress as SUPPRESS
 
-from twisted.python.compat import _PY3
 from twisted.python import util
-from twisted.python.versions import Version
+from twisted.python.filepath import FilePath
 from twisted.internet import reactor
 from twisted.internet.interfaces import IReactorProcess
 from twisted.internet.protocol import ProcessProtocol
 from twisted.internet.defer import Deferred
 from twisted.internet.error import ProcessDone
-
-if _PY3:
-    MockOS = None
-    from twisted.python.deprecate import _fullyQualifiedName as fullyQualifiedName
-else:
-    from twisted.test.test_process import MockOS
-    from twisted.python.reflect import fullyQualifiedName
+from twisted.test.test_process import MockOS
 
 
+pyExe = FilePath(sys.executable)._asBytesPath()
 
-class UtilTestCase(unittest.TestCase):
+
+class UtilTests(unittest.TestCase):
 
     def testUniq(self):
         l = ["a", 1, "ab", "a", 3, 4, 1, 2, 2, 4, 6]
         self.assertEqual(util.uniquify(l), ["a", 1, "ab", 3, 4, 2, 6])
 
     def testRaises(self):
-        self.failUnless(util.raises(ZeroDivisionError, divmod, 1, 0))
-        self.failIf(util.raises(ZeroDivisionError, divmod, 0, 1))
+        self.assertTrue(util.raises(ZeroDivisionError, divmod, 1, 0))
+        self.assertFalse(util.raises(ZeroDivisionError, divmod, 0, 1))
 
         try:
             util.raises(TypeError, divmod, 1, 0)
@@ -149,7 +148,7 @@ class UntilConcludesTests(unittest.TestCase):
 
 
 
-class SwitchUIDTest(unittest.TestCase):
+class SwitchUIDTests(unittest.TestCase):
     """
     Tests for L{util.switchUID}.
     """
@@ -201,11 +200,12 @@ class SwitchUIDTest(unittest.TestCase):
         util.switchUID(uid, None)
         self.assertEqual(self.initgroupsCalls, [])
         self.assertEqual(self.mockos.actions, [])
-        warnings = self.flushWarnings([util.switchUID])
-        self.assertEqual(len(warnings), 1)
-        self.assertIn('tried to drop privileges and setuid %i' % uid, 
-                      warnings[0]['message'])
-        self.assertIn('but uid is already %i' % uid, warnings[0]['message'])
+        currentWarnings = self.flushWarnings([util.switchUID])
+        self.assertEqual(len(currentWarnings), 1)
+        self.assertIn('tried to drop privileges and setuid %i' % uid,
+                      currentWarnings[0]['message'])
+        self.assertIn(
+            'but uid is already %i' % uid, currentWarnings[0]['message'])
 
 
     def test_currentEUID(self):
@@ -217,15 +217,16 @@ class SwitchUIDTest(unittest.TestCase):
         util.switchUID(euid, None, True)
         self.assertEqual(self.initgroupsCalls, [])
         self.assertEqual(self.mockos.seteuidCalls, [])
-        warnings = self.flushWarnings([util.switchUID])
-        self.assertEqual(len(warnings), 1)
-        self.assertIn('tried to drop privileges and seteuid %i' % euid, 
-                      warnings[0]['message'])
-        self.assertIn('but euid is already %i' % euid, warnings[0]['message'])
+        currentWarnings = self.flushWarnings([util.switchUID])
+        self.assertEqual(len(currentWarnings), 1)
+        self.assertIn('tried to drop privileges and seteuid %i' % euid,
+                      currentWarnings[0]['message'])
+        self.assertIn(
+            'but euid is already %i' % euid, currentWarnings[0]['message'])
 
 
 
-class TestMergeFunctionMetadata(unittest.TestCase):
+class MergeFunctionMetadataTests(unittest.TestCase):
     """
     Tests for L{mergeFunctionMetadata}.
     """
@@ -246,7 +247,7 @@ class TestMergeFunctionMetadata(unittest.TestCase):
             return bar_object
 
         baz = util.mergeFunctionMetadata(foo, bar)
-        self.assertIdentical(baz(1, 2, (3, 4), quux=10), bar_object)
+        self.assertIs(baz(1, 2, (3, 4), quux=10), bar_object)
 
 
     def test_moduleIsMerged(self):
@@ -322,35 +323,29 @@ class TestMergeFunctionMetadata(unittest.TestCase):
 
 
 
-class OrderedDictTest(unittest.TestCase):
-    def testOrderedDict(self):
-        d = util.OrderedDict()
-        d['a'] = 'b'
-        d['b'] = 'a'
-        d[3] = 12
-        d[1234] = 4321
-        self.assertEqual(repr(d), "{'a': 'b', 'b': 'a', 3: 12, 1234: 4321}")
-        self.assertEqual(d.values(), ['b', 'a', 12, 4321])
-        del d[3]
-        self.assertEqual(repr(d), "{'a': 'b', 'b': 'a', 1234: 4321}")
-        self.assertEqual(d, {'a': 'b', 'b': 'a', 1234:4321})
-        self.assertEqual(d.keys(), ['a', 'b', 1234])
-        self.assertEqual(list(d.iteritems()),
-                          [('a', 'b'), ('b','a'), (1234, 4321)])
-        item = d.popitem()
-        self.assertEqual(item, (1234, 4321))
+class OrderedDictTests(unittest.TestCase):
+    """
+    Tests for L{util.OrderedDict}.
+    """
+    def test_deprecated(self):
+        """
+        L{util.OrderedDict} is deprecated.
+        """
+        from twisted.python.util import OrderedDict
+        OrderedDict # Shh pyflakes
 
-    def testInitialization(self):
-        d = util.OrderedDict({'monkey': 'ook',
-                              'apple': 'red'})
-        self.failUnless(d._order)
-
-        d = util.OrderedDict(((1,1),(3,3),(2,2),(0,0)))
-        self.assertEqual(repr(d), "{1: 1, 3: 3, 2: 2, 0: 0}")
+        currentWarnings = self.flushWarnings(offendingFunctions=[
+            self.test_deprecated])
+        self.assertEqual(
+            currentWarnings[0]['message'],
+            "twisted.python.util.OrderedDict was deprecated in Twisted "
+            "15.5.0: Use collections.OrderedDict instead.")
+        self.assertEqual(currentWarnings[0]['category'], DeprecationWarning)
+        self.assertEqual(len(currentWarnings), 1)
 
 
 
-class InsensitiveDictTest(unittest.TestCase):
+class InsensitiveDictTests(unittest.TestCase):
     """
     Tests for L{util.InsensitiveDict}.
     """
@@ -367,9 +362,13 @@ class InsensitiveDictTest(unittest.TestCase):
         self.assertEqual(dct['foo'], dct.get('Foo'))
         self.assertIn(1, dct)
         self.assertIn('foo', dct)
-        # Make eval() work, urrrrgh:
-        InsensitiveDict = util.InsensitiveDict
-        self.assertEqual(eval(repr(dct)), dct)
+
+        result = eval(repr(dct), {
+            'dct': dct,
+            'InsensitiveDict': util.InsensitiveDict,
+            })
+        self.assertEqual(result, dct)
+
         keys=['Foo', 'fnz', 1]
         for x in keys:
             self.assertIn(x, dct.keys())
@@ -424,7 +423,7 @@ class PasswordTestingProcessProtocol(ProcessProtocol):
     """
     def connectionMade(self):
         self.output = []
-        self.transport.write('secret\n')
+        self.transport.write(b'secret\n')
 
     def childDataReceived(self, fd, output):
         self.output.append((fd, output))
@@ -433,7 +432,7 @@ class PasswordTestingProcessProtocol(ProcessProtocol):
         self.finished.callback((reason, self.output))
 
 
-class GetPasswordTest(unittest.TestCase):
+class GetPasswordTests(unittest.TestCase):
     if not IReactorProcess.providedBy(reactor):
         skip = "Process support required to test getPassword"
 
@@ -447,31 +446,30 @@ class GetPasswordTest(unittest.TestCase):
         p = PasswordTestingProcessProtocol()
         p.finished = Deferred()
         reactor.spawnProcess(
-            p,
-            sys.executable,
-            [sys.executable,
-             '-c',
-             ('import sys\n'
-             'from twisted.python.util import getPassword\n'
-              'sys.stdout.write(getPassword())\n'
-              'sys.stdout.flush()\n')],
-            env={'PYTHONPATH': os.pathsep.join(sys.path)})
+            p, pyExe,
+            [pyExe,
+             b'-c',
+             (b'import sys\n'
+              b'from twisted.python.util import getPassword\n'
+              b'sys.stdout.write(getPassword())\n'
+              b'sys.stdout.flush()\n')],
+            env={b'PYTHONPATH': os.pathsep.join(sys.path).encode("utf8")})
 
         def processFinished(result):
             (reason, output) = result
             reason.trap(ProcessDone)
-            self.assertIn((1, 'secret'), output)
+            self.assertIn((1, b'secret'), output)
 
         return p.finished.addCallback(processFinished)
 
 
 
-class SearchUpwardsTest(unittest.TestCase):
+class SearchUpwardsTests(unittest.TestCase):
     def testSearchupwards(self):
         os.makedirs('searchupwards/a/b/c')
-        file('searchupwards/foo.txt', 'w').close()
-        file('searchupwards/a/foo.txt', 'w').close()
-        file('searchupwards/a/b/c/foo.txt', 'w').close()
+        open('searchupwards/foo.txt', 'w').close()
+        open('searchupwards/a/foo.txt', 'w').close()
+        open('searchupwards/a/b/c/foo.txt', 'w').close()
         os.mkdir('searchupwards/bar')
         os.mkdir('searchupwards/bam')
         os.mkdir('searchupwards/a/bar')
@@ -490,80 +488,80 @@ class SearchUpwardsTest(unittest.TestCase):
 
 
 
-class IntervalDifferentialTestCase(unittest.TestCase):
+class IntervalDifferentialTests(unittest.TestCase):
     def testDefault(self):
         d = iter(util.IntervalDifferential([], 10))
         for i in range(100):
-            self.assertEqual(d.next(), (10, None))
+            self.assertEqual(next(d), (10, None))
 
     def testSingle(self):
         d = iter(util.IntervalDifferential([5], 10))
         for i in range(100):
-            self.assertEqual(d.next(), (5, 0))
+            self.assertEqual(next(d), (5, 0))
 
     def testPair(self):
         d = iter(util.IntervalDifferential([5, 7], 10))
         for i in range(100):
-            self.assertEqual(d.next(), (5, 0))
-            self.assertEqual(d.next(), (2, 1))
-            self.assertEqual(d.next(), (3, 0))
-            self.assertEqual(d.next(), (4, 1))
-            self.assertEqual(d.next(), (1, 0))
-            self.assertEqual(d.next(), (5, 0))
-            self.assertEqual(d.next(), (1, 1))
-            self.assertEqual(d.next(), (4, 0))
-            self.assertEqual(d.next(), (3, 1))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (5, 0))
-            self.assertEqual(d.next(), (0, 1))
+            self.assertEqual(next(d), (5, 0))
+            self.assertEqual(next(d), (2, 1))
+            self.assertEqual(next(d), (3, 0))
+            self.assertEqual(next(d), (4, 1))
+            self.assertEqual(next(d), (1, 0))
+            self.assertEqual(next(d), (5, 0))
+            self.assertEqual(next(d), (1, 1))
+            self.assertEqual(next(d), (4, 0))
+            self.assertEqual(next(d), (3, 1))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (5, 0))
+            self.assertEqual(next(d), (0, 1))
 
     def testTriple(self):
         d = iter(util.IntervalDifferential([2, 4, 5], 10))
         for i in range(100):
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (0, 1))
-            self.assertEqual(d.next(), (1, 2))
-            self.assertEqual(d.next(), (1, 0))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (0, 1))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (0, 2))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (0, 1))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (1, 2))
-            self.assertEqual(d.next(), (1, 0))
-            self.assertEqual(d.next(), (0, 1))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (2, 0))
-            self.assertEqual(d.next(), (0, 1))
-            self.assertEqual(d.next(), (0, 2))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (0, 1))
+            self.assertEqual(next(d), (1, 2))
+            self.assertEqual(next(d), (1, 0))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (0, 1))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (0, 2))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (0, 1))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (1, 2))
+            self.assertEqual(next(d), (1, 0))
+            self.assertEqual(next(d), (0, 1))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (2, 0))
+            self.assertEqual(next(d), (0, 1))
+            self.assertEqual(next(d), (0, 2))
 
     def testInsert(self):
         d = iter(util.IntervalDifferential([], 10))
-        self.assertEqual(d.next(), (10, None))
+        self.assertEqual(next(d), (10, None))
         d.addInterval(3)
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (3, 0))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (3, 0))
         d.addInterval(6)
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (0, 1))
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (0, 1))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (0, 1))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (0, 1))
 
     def testRemove(self):
         d = iter(util.IntervalDifferential([3, 5], 10))
-        self.assertEqual(d.next(), (3, 0))
-        self.assertEqual(d.next(), (2, 1))
-        self.assertEqual(d.next(), (1, 0))
+        self.assertEqual(next(d), (3, 0))
+        self.assertEqual(next(d), (2, 1))
+        self.assertEqual(next(d), (1, 0))
         d.removeInterval(3)
-        self.assertEqual(d.next(), (4, 0))
-        self.assertEqual(d.next(), (5, 0))
+        self.assertEqual(next(d), (4, 0))
+        self.assertEqual(next(d), (5, 0))
         d.removeInterval(5)
-        self.assertEqual(d.next(), (10, None))
+        self.assertEqual(next(d), (10, None))
         self.assertRaises(ValueError, d.removeInterval, 10)
 
 
@@ -658,7 +656,7 @@ class EqualityTests(unittest.TestCase):
 
     def test_unequality(self):
         """
-        Unequality between instances of a particular L{record} should be
+        Inequality between instances of a particular L{record} should be
         defined as the negation of equality.
         """
         self.assertFalse(Record(1, 2) != Record(1, 2))
@@ -845,161 +843,38 @@ class RunAsEffectiveUserTests(unittest.TestCase):
 
 
 
-def _getDeprecationSuppression(f):
-    """
-    Returns a tuple of arguments needed to suppress deprecation warnings from
-    a specified function.
-
-    @param f: function to suppress dperecation warnings for
-    @type f: L{callable}
-
-    @return: tuple to add to C{suppress} attribute
-    """
-    return SUPPRESS(
-        category=DeprecationWarning,
-        message='%s was deprecated' % (fullyQualifiedName(f),))
-
-
-
-class UnsignedIDTests(unittest.TestCase):
-    """
-    Tests for L{util.unsignedID} and L{util.setIDFunction}.
-    """
-
-    suppress = [
-        _getDeprecationSuppression(util.unsignedID),
-        _getDeprecationSuppression(util.setIDFunction),
-        ]
-
-    def setUp(self):
-        """
-        Save the value of L{util._idFunction} and arrange for it to be restored
-        after the test runs.
-        """
-        self.addCleanup(setattr, util, '_idFunction', util._idFunction)
-
-
-    def test_setIDFunction(self):
-        """
-        L{util.setIDFunction} returns the last value passed to it.
-        """
-        value = object()
-        previous = util.setIDFunction(value)
-        result = util.setIDFunction(previous)
-        self.assertIdentical(value, result)
-
-
-    def test_setIDFunctionDeprecated(self):
-        """
-        L{util.setIDFunction} is deprecated.
-        """
-        self.callDeprecated(
-            (Version("Twisted", 13, 0, 0)),
-            util.setIDFunction, UnsignedIDTests)
-    test_setIDFunctionDeprecated.suppress = []
-
-
-    def test_unsignedID(self):
-        """
-        L{util.unsignedID} uses the function passed to L{util.setIDFunction} to
-        determine the unique integer id of an object and then adjusts it to be
-        positive if necessary.
-        """
-        foo = object()
-        bar = object()
-
-        # A fake object identity mapping
-        objects = {foo: 17, bar: -73}
-        def fakeId(obj):
-            return objects[obj]
-
-        util.setIDFunction(fakeId)
-
-        self.assertEqual(util.unsignedID(foo), 17)
-        self.assertEqual(util.unsignedID(bar), (sys.maxsize + 1) * 2 - 73)
-
-
-    def test_unsignedIDDeprecated(self):
-        """
-        L{util.unsignedID} is deprecated, use the builtin C{id} instead.
-        """
-        self.callDeprecated(
-            (Version("Twisted", 13, 0, 0), "builtin id"),
-            util.unsignedID, UnsignedIDTests)
-    test_unsignedIDDeprecated.suppress = []
-
-
-    def test_defaultIDFunction(self):
-        """
-        L{util.unsignedID} uses the built in L{id} by default.
-        """
-        obj = object()
-        idValue = id(obj)
-        if idValue < 0:
-            idValue += (sys.maxsize + 1) * 2
-
-        self.assertEqual(util.unsignedID(obj), idValue)
-
-
-
 class InitGroupsTests(unittest.TestCase):
     """
     Tests for L{util.initgroups}.
     """
-
-    if pwd is None:
-        skip = "pwd not available"
-
-
-    def setUp(self):
-        self.addCleanup(setattr, util, "_c_initgroups", util._c_initgroups)
-        self.addCleanup(setattr, util, "setgroups", util.setgroups)
-
-
-    def test_initgroupsForceC(self):
+    def test_initgroupsInStdlib(self):
         """
-        If we fake the presence of the C extension, it's called instead of the
-        Python implementation.
+        Calling L{util.initgroups} will call the underlying stdlib
+        implmentation.
         """
         calls = []
-        util._c_initgroups = lambda x, y: calls.append((x, y))
+
+        def mockInitgroups(x, y):
+            calls.append((x, y))
+
+        self.patch(util, "_initgroups", mockInitgroups)
         setgroupsCalls = []
-        util.setgroups = calls.append
+        self.patch(util, "setgroups", setgroupsCalls.append)
 
         util.initgroups(os.getuid(), 4)
-        self.assertEqual(calls, [(pwd.getpwuid(os.getuid())[0], 4)])
+        self.assertEqual(calls, [(pwd.getpwuid(os.getuid()).pw_name, 4)])
         self.assertFalse(setgroupsCalls)
 
 
-    def test_initgroupsForcePython(self):
+    def test_initgroupsNoneGid(self):
         """
-        If we fake the absence of the C extension, the Python implementation is
-        called instead, calling C{os.setgroups}.
+        Calling L{util.initgroups} with None for gid gives an error.
         """
-        util._c_initgroups = None
-        calls = []
-        util.setgroups = calls.append
-        util.initgroups(os.getuid(), os.getgid())
-        # Something should be in the calls, we don't really care what
-        self.assertTrue(calls)
+        self.assertRaises(TypeError, util.initgroups, os.getuid(), None)
 
+    if util._initgroups is None:
+        skip = "stdlib support for initgroups is not available"
 
-    def test_initgroupsInC(self):
-        """
-        If the C extension is present, it's called instead of the Python
-        version.  We check that by making sure C{os.setgroups} is not called.
-        """
-        calls = []
-        util.setgroups = calls.append
-        try:
-            util.initgroups(os.getuid(), os.getgid())
-        except OSError:
-            pass
-        self.assertFalse(calls)
-
-
-    if util._c_initgroups is None:
-        test_initgroupsInC.skip = "C initgroups not available"
 
 
 class DeprecationTests(unittest.TestCase):
@@ -1011,14 +886,14 @@ class DeprecationTests(unittest.TestCase):
         L{util.getPluginDirs} is deprecated.
         """
         util.getPluginDirs()
-        warnings = self.flushWarnings(offendingFunctions=[
+        currentWarnings = self.flushWarnings(offendingFunctions=[
             self.test_getPluginDirs])
         self.assertEqual(
-            warnings[0]['message'],
+            currentWarnings[0]['message'],
             "twisted.python.util.getPluginDirs is deprecated since Twisted "
             "12.2.")
-        self.assertEqual(warnings[0]['category'], DeprecationWarning)
-        self.assertEqual(len(warnings), 1)
+        self.assertEqual(currentWarnings[0]['category'], DeprecationWarning)
+        self.assertEqual(len(currentWarnings), 1)
 
 
     def test_addPluginDir(self):
@@ -1026,14 +901,14 @@ class DeprecationTests(unittest.TestCase):
         L{util.addPluginDir} is deprecated.
         """
         util.addPluginDir()
-        warnings = self.flushWarnings(offendingFunctions=[
+        currentWarnings = self.flushWarnings(offendingFunctions=[
             self.test_addPluginDir])
         self.assertEqual(
-            warnings[0]['message'],
+            currentWarnings[0]['message'],
             "twisted.python.util.addPluginDir is deprecated since Twisted "
             "12.2.")
-        self.assertEqual(warnings[0]['category'], DeprecationWarning)
-        self.assertEqual(len(warnings), 1)
+        self.assertEqual(currentWarnings[0]['category'], DeprecationWarning)
+        self.assertEqual(len(currentWarnings), 1)
     test_addPluginDir.suppress = [
             SUPPRESS(category=DeprecationWarning,
                      message="twisted.python.util.getPluginDirs is deprecated")
@@ -1160,9 +1035,135 @@ class FancyStrMixinTests(unittest.TestCase):
         obj = Foo()
         self.assertEqual(str(obj), repr(obj))
 
-if _PY3:
-    del (SwitchUIDTest, SearchUpwardsTest, RunAsEffectiveUserTests,
-         OrderedDictTest, IntervalDifferentialTestCase, UtilTestCase,
-         TestMergeFunctionMetadata, DeprecationTests, InitGroupsTests,
-         GetPasswordTest,
-         )
+
+
+class PadToTests(unittest.TestCase):
+    """
+    Tests for L{util.padTo}.
+    """
+
+    def test_default(self):
+        """
+        L{None} values can be added to a list to cause it to have a certain
+        length.
+        """
+        padded = util.padTo(3, [])
+        self.assertEqual([None] * 3, padded)
+
+
+    def test_specificDefaultValue(self):
+        """
+        A specific value can be added to a list to cause it to have a certain
+        length.
+        """
+        padded = util.padTo(4, [], "x")
+        self.assertEqual(["x"] * 4, padded)
+
+
+    def test_padNonEmptyList(self):
+        """
+        A list which already has some items has the padding value added after
+        those items.
+        """
+        padded = util.padTo(3, [1, 2], "z")
+        self.assertEqual([1, 2, "z"], padded)
+
+
+    def test_padToSmallerSize(self):
+        """
+        L{util.padTo} can't pad a list if the size requested is smaller than
+        the size of the list to pad.
+        """
+        self.assertRaises(ValueError, util.padTo, 1, [1, 2])
+
+
+    def test_alreadyPadded(self):
+        """
+        If the list is already the length indicated by the padding argument
+        then a list with the same value is returned.
+        """
+        items = [1, 2]
+        padded = util.padTo(len(items), items)
+        self.assertEqual(items, padded)
+
+
+    def test_alreadyPaddedCopies(self):
+        """
+        If the list is already the length indicated by the padding argument
+        then the return value is a copy of the input.
+        """
+        items = [1, 2]
+        padded = util.padTo(len(items), items)
+        self.assertIsNot(padded, items)
+
+
+    def test_makeCopy(self):
+        """
+        L{util.padTo} doesn't modify the input list but makes a copy.
+        """
+        items = []
+        util.padTo(4, items)
+        self.assertEqual([], items)
+
+
+
+class ReplaceIfTests(unittest.TestCase):
+    """
+    Tests for L{util._replaceIf}.
+    """
+
+    def test_replacesIfTrue(self):
+        """
+        L{util._replaceIf} swaps out the body of a function if the conditional
+        is C{True}.
+        """
+        @util._replaceIf(True, lambda: "hi")
+        def test():
+            return "bye"
+
+        self.assertEqual(test(), "hi")
+        self.assertEqual(test.__name__, "test")
+        self.assertEqual(test.__module__, "twisted.python.test.test_util")
+
+
+    def test_keepsIfFalse(self):
+        """
+        L{util._replaceIf} keeps the original body of the function if the
+        conditional is C{False}.
+        """
+        @util._replaceIf(False, lambda: "hi")
+        def test():
+            return "bye"
+
+        self.assertEqual(test(), "bye")
+
+
+    def test_multipleReplace(self):
+        """
+        In the case that multiple conditions are true, the first one
+        (to the reader) is chosen by L{util._replaceIf}
+        """
+        @util._replaceIf(True, lambda: "hi")
+        @util._replaceIf(False, lambda: "bar")
+        @util._replaceIf(True, lambda: "baz")
+        def test():
+            return "bye"
+
+        self.assertEqual(test(), "hi")
+
+
+    def test_boolsOnly(self):
+        """
+        L{util._replaceIf}'s condition argument only accepts bools.
+        """
+        with self.assertRaises(ValueError) as e:
+
+            @util._replaceIf("hi", "there")
+            def test():
+                """
+                Some test function.
+                """
+
+        self.assertEqual(e.exception.args[0],
+                         ("condition argument to _replaceIf requires a bool, "
+                          "not 'hi'"))

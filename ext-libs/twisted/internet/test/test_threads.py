@@ -74,7 +74,7 @@ class ThreadTestsBuilder(ReactorBuilder):
         When invoked from the reactor thread, previous implementations of
         L{IReactorThreads.callFromThread} would skip the pipe/socket based wake
         up step, assuming the reactor would wake up on its own.  However, this
-        resulted in the reactor not noticing a insert into the thread queue at
+        resulted in the reactor not noticing an insert into the thread queue at
         the right time (in this case, after the thread queue has been processed
         for that reactor iteration).
         """
@@ -124,7 +124,7 @@ class ThreadTestsBuilder(ReactorBuilder):
                           reactor.callFromThread, threadCall)
         self.runReactor(reactor, 5)
 
-        self.assertEquals(result, [threading.currentThread()])
+        self.assertEqual(result, [threading.currentThread()])
 
 
     def test_stopThreadPool(self):
@@ -141,7 +141,7 @@ class ThreadTestsBuilder(ReactorBuilder):
         reactor.callWhenRunning(reactor.stop)
         self.runReactor(reactor)
         gc.collect()
-        self.assertIdentical(threadpool(), None)
+        self.assertIsNone(threadpool())
 
 
     def test_stopThreadPoolWhenStartedAfterReactorRan(self):
@@ -164,7 +164,7 @@ class ThreadTestsBuilder(ReactorBuilder):
         reactor.callWhenRunning(acquireThreadPool)
         self.runReactor(reactor)
         gc.collect()
-        self.assertIdentical(threadPoolRefs[0](), None)
+        self.assertIsNone(threadPoolRefs[0]())
 
 
     def test_cleanUpThreadPoolEvenBeforeReactorIsRun(self):
@@ -181,8 +181,20 @@ class ThreadTestsBuilder(ReactorBuilder):
         reactor = self.buildReactor()
         threadPoolRef = ref(reactor.getThreadPool())
         reactor.fireSystemEvent("shutdown")
-        gc.collect()
-        self.assertIdentical(threadPoolRef(), None)
+
+        if reactor.__class__.__name__ == "AsyncioSelectorReactor":
+            self.assertIsNone(reactor.threadpool)
+            # ReactorBase.__init__ sets self.crash as a 'shutdown'
+            # event, which in turn calls stop on the underlying
+            # asyncio event loop, which in turn sets a _stopping
+            # attribute on it that's only unset after an iteration of
+            # the loop.  Subsequent tests can only reuse the asyncio
+            # loop if it's allowed to run and unset that _stopping
+            # attribute.
+            self.runReactor(reactor)
+        else:
+            gc.collect()
+            self.assertIsNone(threadPoolRef())
 
 
     def test_isInIOThread(self):

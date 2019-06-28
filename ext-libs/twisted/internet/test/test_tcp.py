@@ -10,37 +10,60 @@ from __future__ import division, absolute_import
 
 __metaclass__ = type
 
-import socket, errno
+import errno
+import gc
+import io
+import os
+import socket
 
-from zope.interface import implementer
+from functools import wraps
 
-from twisted.python.compat import _PY3
+import attr
+
+from zope.interface import Interface, implementer
+from zope.interface.verify import verifyClass, verifyObject
+
+from twisted.logger import Logger
+from twisted.python.compat import long
 from twisted.python.runtime import platform
 from twisted.python.failure import Failure
 from twisted.python import log
 
-from twisted.trial.unittest import SkipTest, TestCase
-from twisted.internet.test.reactormixins import ReactorBuilder
+from twisted.trial.unittest import SkipTest, SynchronousTestCase, TestCase
 from twisted.internet.error import (
     ConnectionLost, UserError, ConnectionRefusedError, ConnectionDone,
-    ConnectionAborted)
+    ConnectionAborted, DNSLookupError, NoProtocol,
+    ConnectBindError, ConnectionClosed,
+)
+from twisted.internet.test.connectionmixins import (
+    LogObserverMixin, ConnectionTestsMixin, StreamClientTestsMixin,
+    findFreePort, ConnectableProtocol, EndpointCreator,
+    runProtocolsWithReactor, Stop, BrokenContextFactory)
+from twisted.internet.test.reactormixins import (
+    ReactorBuilder, needsRunningReactor, stopOnError)
 from twisted.internet.interfaces import (
-    ILoggingContext, IConnector, IReactorFDSet, IReactorSocket, IReactorTCP)
+    ILoggingContext, IConnector, IReactorFDSet, IReactorSocket, IReactorTCP,
+    IResolverSimple, ITLSTransport)
 from twisted.internet.address import IPv4Address, IPv6Address
 from twisted.internet.defer import (
-    Deferred, DeferredList, maybeDeferred, gatherResults)
+    Deferred, DeferredList, maybeDeferred, gatherResults, succeed, fail)
 from twisted.internet.endpoints import TCP4ServerEndpoint, TCP4ClientEndpoint
 from twisted.internet.protocol import ServerFactory, ClientFactory, Protocol
 from twisted.internet.interfaces import (
     IPushProducer, IPullProducer, IHalfCloseableProtocol)
-from twisted.internet.tcp import Connection, Server, _resolveIPv6
-
-from twisted.internet.test.connectionmixins import (
-    LogObserverMixin, ConnectionTestsMixin, TCPClientTestsMixin, findFreePort,
-    ConnectableProtocol, EndpointCreator, runProtocolsWithReactor)
+from twisted.internet.tcp import (
+    _BuffersLogs,
+    Connection,
+    _FileDescriptorReservation,
+    _IFileDescriptorReservation,
+    _NullFileDescriptorReservation,
+    Server,
+    _resolveIPv6,
+)
 from twisted.internet.test.test_core import ObjectModelIntegrationMixin
 from twisted.test.test_tcp import MyClientFactory, MyServerFactory
 from twisted.test.test_tcp import ClosingFactory, ClientStartStopFactory
+from twisted.test.proto_helpers import MemoryReactor, StringTransport
 
 try:
     from OpenSSL import SSL
@@ -50,18 +73,24 @@ else:
     from twisted.internet.ssl import ClientContextFactory
     useSSL = True
 
+s = None
 try:
-    socket.socket(socket.AF_INET6, socket.SOCK_STREAM).close()
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    s.bind(('::1', 0))
 except socket.error as e:
     ipv6Skip = str(e)
 else:
     ipv6Skip = None
+if s is not None:
+    s.close()
 
 
 
 if platform.isWindows():
     from twisted.internet.test import _win32ifaces
     getLinkLocalIPv6Addresses = _win32ifaces.win32GetLinkLocalIPv6Addresses
+
+    SKIP_EMFILE = "Reserved EMFILE file descriptor not supported on Windows."
 else:
     try:
         from twisted.internet.test import _posixifaces
@@ -69,6 +98,8 @@ else:
         getLinkLocalIPv6Addresses = lambda: []
     else:
         getLinkLocalIPv6Addresses = _posixifaces.posixGetLinkLocalIPv6Addresses
+
+    SKIP_EMFILE = None
 
 
 
@@ -173,7 +204,7 @@ class FakeSocket(object):
 
 
 
-class TestFakeSocket(TestCase):
+class FakeSocketTests(TestCase):
     """
     Test that the FakeSocket can be used by the doRead method of L{Connection}
     """
@@ -207,7 +238,7 @@ class FakeProtocol(Protocol):
     """
     def dataReceived(self, data):
         """
-        Return something other than C{None} to trigger a deprecation warning for
+        Return something other than L{None} to trigger a deprecation warning for
         that behavior.
         """
         return ()
@@ -217,12 +248,55 @@ class FakeProtocol(Protocol):
 @implementer(IReactorFDSet)
 class _FakeFDSetReactor(object):
     """
-    A no-op implementation of L{IReactorFDSet}, which ignores all adds and
-    removes.
+    An in-memory implementation of L{IReactorFDSet}, which records the current
+    sets of active L{IReadDescriptor} and L{IWriteDescriptor}s.
+
+    @ivar _readers: The set of L{IReadDescriptor}s active on this
+        L{_FakeFDSetReactor}
+    @type _readers: L{set}
+
+    @ivar _writers: The set of L{IWriteDescriptor}s active on this
+        L{_FakeFDSetReactor}
+    @ivar _writers: L{set}
     """
 
-    addReader = addWriter = removeReader = removeWriter = (
-        lambda self, desc: None)
+    def __init__(self):
+        self._readers = set()
+        self._writers = set()
+
+
+    def addReader(self, reader):
+        self._readers.add(reader)
+
+
+    def removeReader(self, reader):
+        if reader in self._readers:
+            self._readers.remove(reader)
+
+
+    def addWriter(self, writer):
+        self._writers.add(writer)
+
+
+    def removeWriter(self, writer):
+        if writer in self._writers:
+            self._writers.remove(writer)
+
+
+    def removeAll(self):
+        result = self.getReaders() + self.getWriters()
+        self.__init__()
+        return result
+
+
+    def getReaders(self):
+        return list(self._readers)
+
+
+    def getWriters(self):
+        return list(self._writers)
+
+verifyClass(IReactorFDSet, _FakeFDSetReactor)
 
 
 
@@ -251,7 +325,7 @@ class TCPServerTests(TestCase):
         self.assertEqual(self.skt.sendBuffer, [])
 
 
-    def test_writeAfteDisconnectAfterTLS(self):
+    def test_writeAfterDisconnectAfterTLS(self):
         """
         L{Server.write} discards bytes passed to it if called after it has lost
         its connection when the connection had started TLS.
@@ -271,7 +345,7 @@ class TCPServerTests(TestCase):
         self.assertEqual(self.skt.sendBuffer, [])
 
 
-    def test_writeSequenceAfteDisconnectAfterTLS(self):
+    def test_writeSequenceAfterDisconnectAfterTLS(self):
         """
         L{Server.writeSequence} discards bytes passed to it if called after it
         has lost its connection when the connection had started TLS.
@@ -373,14 +447,88 @@ class TCP6Creator(TCPCreator):
 
 
 
-class TCPClientTestsBase(ReactorBuilder, ConnectionTestsMixin,
-                         TCPClientTestsMixin):
+@implementer(IResolverSimple)
+class FakeResolver(object):
     """
-    Base class for builders defining tests related to L{IReactorTCP.connectTCP}.
+    A resolver implementation based on a C{dict} mapping names to addresses.
+    """
+
+    def __init__(self, names):
+        self.names = names
+
+
+    def getHostByName(self, name, timeout):
+        """
+        Return the address mapped to C{name} if it exists, or raise a
+        C{DNSLookupError}.
+
+        @param name: The name to resolve.
+
+        @param timeout: The lookup timeout, ignore here.
+        """
+        try:
+            return succeed(self.names[name])
+        except KeyError:
+            return fail(DNSLookupError("FakeResolver couldn't find " + name))
+
+
+
+class TCPClientTestsBase(ReactorBuilder, ConnectionTestsMixin,
+                         StreamClientTestsMixin):
+    """
+    Base class for builders defining tests related to
+    L{IReactorTCP.connectTCP}.  Classes which uses this in must provide all of
+    the documented instance variables in order to specify how the test works.
+    These are documented as instance variables rather than declared as methods
+    due to some peculiar inheritance ordering concerns, but they are
+    effectively abstract methods.
+
+    @ivar endpoints: A client/server endpoint creator appropriate to the
+        address family being tested.
+    @type endpoints: L{twisted.internet.test.connectionmixins.EndpointCreator}
+
+    @ivar interface: An IP address literal to locally bind a socket to as well
+        as to connect to.  This can be any valid interface for the local host.
+    @type interface: C{str}
+
+    @ivar port: An unused local listening port to listen on and connect to.
+        This will be used in conjunction with the C{interface}.  (Depending on
+        what they're testing, some tests will locate their own port with
+        L{findFreePort} instead.)
+    @type port: C{int}
+
+    @ivar family: an address family constant, such as L{socket.AF_INET},
+        L{socket.AF_INET6}, or L{socket.AF_UNIX}, which indicates the address
+        family of the transport type under test.
+    @type family: C{int}
+
+    @ivar addressClass: the L{twisted.internet.interfaces.IAddress} implementor
+        associated with the transport type under test.  Must also be a
+        3-argument callable which produces an instance of same.
+    @type addressClass: C{type}
+
+    @ivar fakeDomainName: A fake domain name to use, to simulate hostname
+        resolution and to distinguish between hostnames and IP addresses where
+        necessary.
+    @type fakeDomainName: C{str}
     """
     requiredInterfaces = (IReactorTCP,)
 
-    port = 1234
+    _port = None
+
+    @property
+    def port(self):
+        """
+        Return the port number to connect to, using C{self._port} set up by
+        C{listen} if available.
+
+        @return: The port number to connect to.
+        @rtype: C{int}
+        """
+        if self._port is not None:
+            return self._port.getHost().port
+        return findFreePort(self.interface, self.family)[1]
+
 
     @property
     def interface(self):
@@ -388,6 +536,214 @@ class TCPClientTestsBase(ReactorBuilder, ConnectionTestsMixin,
         Return the interface attribute from the endpoints object.
         """
         return self.endpoints.interface
+
+
+    def listen(self, reactor, factory):
+        """
+        Start a TCP server with the given C{factory}.
+
+        @param reactor: The reactor to create the TCP port in.
+
+        @param factory: The server factory.
+
+        @return: A TCP port instance.
+        """
+        self._port = reactor.listenTCP(0, factory, interface=self.interface)
+        return self._port
+
+
+    def connect(self, reactor, factory):
+        """
+        Start a TCP client with the given C{factory}.
+
+        @param reactor: The reactor to create the connection in.
+
+        @param factory: The client factory.
+
+        @return: A TCP connector instance.
+        """
+        return reactor.connectTCP(self.interface, self.port, factory)
+
+
+    def test_buildProtocolReturnsNone(self):
+        """
+        When the factory's C{buildProtocol} returns L{None} the connection is
+        gracefully closed.
+        """
+        connectionLost = Deferred()
+        reactor = self.buildReactor()
+        serverFactory = MyServerFactory()
+        serverFactory.protocolConnectionLost = connectionLost
+
+        # Make sure the test ends quickly.
+        stopOnError(self, reactor)
+
+        class NoneFactory(ServerFactory):
+            def buildProtocol(self, address):
+                return None
+
+        listening = self.endpoints.server(reactor).listen(serverFactory)
+
+        def listened(port):
+            clientFactory = NoneFactory()
+            endpoint = self.endpoints.client(reactor, port.getHost())
+            return endpoint.connect(clientFactory)
+        connecting = listening.addCallback(listened)
+
+        def connectSucceeded(protocol):
+            self.fail(
+                "Stream client endpoint connect succeeded with %r, "
+                "should have failed with NoProtocol." % (protocol,))
+        def connectFailed(reason):
+            reason.trap(NoProtocol)
+        connecting.addCallbacks(connectSucceeded, connectFailed)
+
+        def connected(ignored):
+            # Now that the connection attempt has failed continue waiting for
+            # the server-side connection to be lost.  This is the behavior this
+            # test is primarily concerned with.
+            return connectionLost
+        disconnecting = connecting.addCallback(connected)
+
+        # Make sure any errors that happen in that process get logged quickly.
+        disconnecting.addErrback(log.err)
+
+        def disconnected(ignored):
+            # The Deferred has to succeed at this point (because log.err always
+            # returns None).  If an error got logged it will fail the test.
+            # Stop the reactor now so the test can complete one way or the
+            # other now.
+            reactor.stop()
+        disconnecting.addCallback(disconnected)
+
+        self.runReactor(reactor)
+
+
+    def test_addresses(self):
+        """
+        A client's transport's C{getHost} and C{getPeer} return L{IPv4Address}
+        instances which have the dotted-quad string form of the resolved
+        address of the local and remote endpoints of the connection
+        respectively as their C{host} attribute, not the hostname originally
+        passed in to
+        L{connectTCP<twisted.internet.interfaces.IReactorTCP.connectTCP>}, if a
+        hostname was used.
+        """
+        host, ignored = findFreePort(self.interface, self.family)[:2]
+        reactor = self.buildReactor()
+        fakeDomain = self.fakeDomainName
+        reactor.installResolver(FakeResolver({fakeDomain: self.interface}))
+
+        server = reactor.listenTCP(
+            0, ServerFactory.forProtocol(Protocol), interface=host)
+        serverAddress = server.getHost()
+
+        transportData = {'host': None, 'peer': None, 'instance': None}
+
+        class CheckAddress(Protocol):
+            def makeConnection(self, transport):
+                transportData['host'] = transport.getHost()
+                transportData['peer'] = transport.getPeer()
+                transportData['instance'] = transport
+                reactor.stop()
+
+        clientFactory = Stop(reactor)
+        clientFactory.protocol = CheckAddress
+
+        def connectMe():
+            while True:
+                port = findFreePort(self.interface, self.family)
+                bindAddress = (self.interface, port[1])
+                log.msg("Connect attempt with bindAddress {}".format(
+                    bindAddress
+                ))
+                try:
+                    reactor.connectTCP(
+                        fakeDomain,
+                        server.getHost().port,
+                        clientFactory,
+                        bindAddress=bindAddress,
+                    )
+                except ConnectBindError:
+                    continue
+                else:
+                    clientFactory.boundPort = port[1]
+                    break
+
+        needsRunningReactor(reactor, connectMe)
+
+        self.runReactor(reactor)
+
+        if clientFactory.failReason:
+            self.fail(clientFactory.failReason.getTraceback())
+
+        transportRepr = "<%s to %s at %x>" % (
+            transportData['instance'].__class__,
+            transportData['instance'].addr,
+            id(transportData['instance']))
+
+        boundPort = [host] + list(socket.getaddrinfo(
+            self.interface, clientFactory.boundPort)[0][-1][1:])
+        serverPort = [host] + list(socket.getaddrinfo(
+            self.interface, serverAddress.port)[0][-1][1:])
+
+        self.assertEqual(
+            transportData['host'],
+            self.addressClass('TCP', *boundPort))
+        self.assertEqual(
+            transportData['peer'],
+            self.addressClass('TCP', *serverPort))
+        self.assertEqual(
+            repr(transportData['instance']), transportRepr)
+
+
+    def test_badContext(self):
+        """
+        If the context factory passed to L{ITCPTransport.startTLS} raises an
+        exception from its C{getContext} method, that exception is raised by
+        L{ITCPTransport.startTLS}.
+        """
+        reactor = self.buildReactor()
+
+        brokenFactory = BrokenContextFactory()
+        results = []
+
+        serverFactory = ServerFactory.forProtocol(Protocol)
+        port = reactor.listenTCP(0, serverFactory, interface=self.interface)
+        endpoint = self.endpoints.client(reactor, port.getHost())
+
+        clientFactory = ClientFactory()
+        clientFactory.protocol = Protocol
+        connectDeferred = endpoint.connect(clientFactory)
+
+        def connected(protocol):
+            if not ITLSTransport.providedBy(protocol.transport):
+                results.append("skip")
+            else:
+                results.append(self.assertRaises(ValueError,
+                                                 protocol.transport.startTLS,
+                                                 brokenFactory))
+
+        def connectFailed(failure):
+            results.append(failure)
+
+        def whenRun():
+            connectDeferred.addCallback(connected)
+            connectDeferred.addErrback(connectFailed)
+            connectDeferred.addBoth(lambda ign: reactor.stop())
+        needsRunningReactor(reactor, whenRun)
+
+        self.runReactor(reactor)
+
+        self.assertEqual(len(results), 1,
+                         "more than one callback result: %s" % (results,))
+
+        if isinstance(results[0], Failure):
+            # self.fail(Failure)
+            results[0].raiseException()
+        if results[0] == "skip":
+            raise SkipTest("Reactor does not support ITLSTransport")
+        self.assertEqual(BrokenContextFactory.message, str(results[0]))
 
 
 
@@ -581,10 +937,432 @@ def createTestSocket(test, addressFamily, socketType):
 
 
 
+class _IExhaustsFileDescriptors(Interface):
+    """
+    A way to trigger C{EMFILE}.
+    """
+
+    def exhaust():
+        """
+        Open file descriptors until C{EMFILE} is reached.
+
+        This can raise any exception except an L{OSError} whose
+        C{errno} is C{EMFILE}.  Any exception raised to the caller
+        implies L{release}.
+        """
+
+
+    def release():
+        """
+        Release all file descriptors opened by L{exhaust}.
+        """
+
+
+    def count():
+        """
+        Return the number of opened file descriptors.
+
+        @return: The number of opened file descriptors; this will be
+            zero if this instance has not opened any.
+        @rtype: L{int}
+        """
+
+
+
+@implementer(_IExhaustsFileDescriptors)
+@attr.s
+class _ExhaustsFileDescriptors(object):
+    """
+    A class that triggers C{EMFILE} by creating as many file
+    descriptors as necessary.
+
+    @ivar fileDescriptorFactory: A factory that creates a new file
+        descriptor.
+    @type fileDescriptorFactory: A L{callable} that accepts no
+        arguments and returns an integral file descriptor, suitable
+        for passing to L{os.close}.
+    """
+    _log = Logger()
+    _fileDescriptorFactory = attr.ib(default=lambda: os.dup(0), repr=False)
+    _close = attr.ib(default=os.close, repr=False)
+    _fileDescriptors = attr.ib(
+        default=attr.Factory(list), init=False, repr=False)
+
+    def exhaust(self):
+        """
+        Open file descriptors until C{EMFILE} is reached.
+        """
+        # Force a collection to close dangling files.
+        gc.collect()
+        try:
+            while True:
+                try:
+                    fd = self._fileDescriptorFactory()
+                except (IOError, OSError) as e:
+                    if e.errno == errno.EMFILE:
+                        break
+                    raise
+                else:
+                    self._fileDescriptors.append(fd)
+        except Exception:
+            self.release()
+            raise
+        else:
+            self._log.info(
+                "EMFILE reached by opening"
+                " {openedFileDescriptors} file descriptors.",
+                openedFileDescriptors=self.count(),
+            )
+
+
+    def release(self):
+        """
+        Release all file descriptors opened by L{exhaust}.
+        """
+        while self._fileDescriptors:
+            fd = self._fileDescriptors.pop()
+            try:
+                self._close(fd)
+            except OSError as e:
+                if e.errno == errno.EBADF:
+                    continue
+                raise
+
+
+    def count(self):
+        """
+        Return the number of opened file descriptors.
+
+        @return: The number of opened file descriptors; this will be
+            zero if this instance has not opened any.
+        @rtype: L{int}
+        """
+        return len(self._fileDescriptors)
+
+
+
+class ExhaustsFileDescriptorsTests(SynchronousTestCase):
+    """
+    Tests for L{_ExhaustsFileDescriptors}.
+    """
+    skip = SKIP_EMFILE
+
+    def setUp(self):
+        self.exhauster = _ExhaustsFileDescriptors()
+        # This assumes release succeeds when there are no file
+        # descriptors to close.
+        self.addCleanup(self.exhauster.release)
+
+
+    def openAFile(self):
+        """
+        Attempt to open a file; if successful, the file is immediately
+        closed.
+        """
+        open(os.devnull).close()
+
+
+    def test_providesInterface(self):
+        """
+        L{_ExhaustsFileDescriptors} instances provide
+        L{_IExhaustsFileDescriptors}.
+        """
+        verifyObject(_IExhaustsFileDescriptors, self.exhauster)
+
+
+    def test_count(self):
+        """
+        L{_ExhaustsFileDescriptors.count} returns the number of open
+        file descriptors.
+        """
+        self.assertEqual(self.exhauster.count(), 0)
+        self.exhauster.exhaust()
+        self.assertGreater(self.exhauster.count(), 0)
+        self.exhauster.release()
+        self.assertEqual(self.exhauster.count(), 0)
+
+
+    def test_exhaustTriggersEMFILE(self):
+        """
+        L{_ExhaustsFileDescriptors.exhaust} causes the process to
+        exhaust its available file descriptors.
+        """
+        self.addCleanup(self.exhauster.release)
+        self.exhauster.exhaust()
+        exception = self.assertRaises(IOError, self.openAFile)
+        self.assertEqual(exception.errno, errno.EMFILE)
+
+
+    def test_exhaustRaisesOSError(self):
+        """
+        An L{OSError} raised within
+        L{_ExhaustsFileDescriptors.exhaust} with an C{errno} other
+        than C{EMFILE} is reraised to the caller.
+        """
+        def raiseOSError():
+            raise OSError(errno.EMFILE + 1, "Not EMFILE")
+
+        exhauster = _ExhaustsFileDescriptors(raiseOSError)
+        self.assertRaises(OSError, exhauster.exhaust)
+
+
+    def test_release(self):
+        """
+        L{_ExhaustsFileDescriptors.release} releases all opened
+        file descriptors.
+        """
+        self.exhauster.exhaust()
+        self.exhauster.release()
+        # Does not fail with EMFILE
+        self.openAFile()
+
+
+    def test_fileDescriptorsReleasedOnFailure(self):
+        """
+        L{_ExhaustsFileDescriptors.exhaust} closes any opened file
+        descriptors if an exception occurs during its exhaustion loop.
+        """
+        fileDescriptors = []
+
+        def failsAfterThree():
+            if len(fileDescriptors) == 3:
+                raise ValueError(
+                    "test_fileDescriptorsReleasedOnFailure"
+                    " fake open exception")
+            else:
+                fd = os.dup(0)
+                fileDescriptors.append(fd)
+                return fd
+
+        exhauster = _ExhaustsFileDescriptors(failsAfterThree)
+        self.addCleanup(exhauster.release)
+
+        self.assertRaises(ValueError, exhauster.exhaust)
+        self.assertEqual(len(fileDescriptors), 3)
+        self.assertEqual(exhauster.count(), 0)
+
+        for fd in fileDescriptors:
+            exception = self.assertRaises(OSError, os.fstat, fd)
+            self.assertEqual(exception.errno, errno.EBADF)
+
+
+    def test_releaseIgnoresEBADF(self):
+        """
+        L{_ExhaustsFileDescriptors.release} continues to close opened
+        file descriptors even when closing one fails with C{EBADF}.
+        """
+        fileDescriptors = []
+
+        def recordFileDescriptors():
+            fd = os.dup(0)
+            fileDescriptors.append(fd)
+            return fd
+
+        exhauster = _ExhaustsFileDescriptors(recordFileDescriptors)
+        self.addCleanup(exhauster.release)
+
+        exhauster.exhaust()
+        self.assertGreater(exhauster.count(), 0)
+
+        os.close(fileDescriptors[0])
+
+        exhauster.release()
+        self.assertEqual(exhauster.count(), 0)
+
+
+    def test_releaseRaisesOSError(self):
+        """
+        An L{OSError} raised within
+        L{_ExhaustsFileDescriptors.release} with an C{errno} other than
+        C{EBADF} is reraised to the caller.
+        """
+        fakeFileDescriptors = []
+
+        def opensThree():
+            if len(fakeFileDescriptors) == 3:
+                raise OSError(errno.EMFILE, "Too many files")
+            fakeFileDescriptors.append(-1)
+            return fakeFileDescriptors[-1]
+
+        def failingClose(fd):
+            raise OSError(11, "test_releaseRaisesOSError fake OSError")
+
+        exhauster = _ExhaustsFileDescriptors(opensThree,
+                                             close=failingClose)
+
+        self.assertEqual(exhauster.count(), 0)
+        exhauster.exhaust()
+        self.assertGreater(exhauster.count(), 0)
+        self.assertRaises(OSError, exhauster.release)
+
+
+
+def assertPeerClosedOnEMFILE(
+        testCase,
+        exhauster,
+        reactor,
+        runReactor,
+        listen,
+        connect,
+):
+    """
+    Assert that an L{IListeningPort} immediately closes an accepted
+    peer socket when the number of open file descriptors exceeds the
+    soft resource limit.
+
+    @param testCase: The test case under which to run this assertion.
+    @type testCase: L{trial.unittest.SynchronousTestCase}
+
+    @param exhauster: The file descriptor exhauster.
+    @type exhauster: L{_ExhaustsFileDescriptors}
+
+    @param reactor: The reactor under test.
+
+    @param runReactor: A callable that will synchronously run the
+        provided reactor.
+
+    @param listen: A callback to bind to a port.
+    @type listen: A L{callable} that accepts two arguments: the
+        provided C{reactor}; and a L{ServerFactory}.  It must return
+        an L{IListeningPort} provider.
+
+    @param connect: A callback to connect a client to the listening
+        port.
+    @type connect: A L{callable} that accepts three arguments: the
+        provided C{reactor}; the address returned by
+        L{IListeningPort.getHost}; and a L{ClientFactory}.  Its return
+        value is ignored.
+    """
+    testCase.addCleanup(exhauster.release)
+
+    serverFactory = MyServerFactory()
+    serverConnectionMade = Deferred()
+    serverFactory.protocolConnectionMade = serverConnectionMade
+    serverConnectionCompleted = [False]
+
+    def stopReactorIfServerAccepted(_):
+        reactor.stop()
+        serverConnectionCompleted[0] = True
+
+    serverConnectionMade.addCallback(
+        stopReactorIfServerAccepted)
+
+    port = listen(reactor, serverFactory)
+    listeningHost = port.getHost()
+    clientFactory = MyClientFactory()
+    connect(reactor, listeningHost, clientFactory)
+
+    reactor.callWhenRunning(exhauster.exhaust)
+
+    def stopReactorAndCloseFileDescriptors(result):
+        exhauster.release()
+        reactor.stop()
+        return result
+
+    clientFactory.deferred.addBoth(stopReactorAndCloseFileDescriptors)
+    clientFactory.failDeferred.addBoth(stopReactorAndCloseFileDescriptors)
+
+    runReactor(reactor)
+
+    noResult = []
+    serverConnectionMade.addBoth(noResult.append)
+    testCase.assertFalse(
+        noResult, "Server accepted connection; EMFILE not triggered.")
+    testCase.assertNoResult(clientFactory.failDeferred)
+    testCase.successResultOf(clientFactory.deferred)
+    testCase.assertRaises(
+        ConnectionClosed,
+        clientFactory.lostReason.raiseException,
+    )
+
+
+
+class AssertPeerClosedOnEMFILETests(SynchronousTestCase):
+    """
+    Tests for L{assertPeerClosedOnEMFILE}.
+    """
+    skip = SKIP_EMFILE
+
+    @implementer(_IExhaustsFileDescriptors)
+    class NullExhauster(object):
+        """
+        An exhauster that does nothing.
+        """
+
+        def exhaust(self):
+            """
+            See L{_IExhaustsFileDescriptors.exhaust}
+            """
+
+
+        def release(self):
+            """
+            See L{_IExhaustsFileDescriptors.release}
+            """
+
+
+        def count(self):
+            """
+            See L{_IExhaustsFileDescriptors.count}
+            """
+
+    def setUp(self):
+        self.reactor = MemoryReactor()
+        self.testCase = SynchronousTestCase()
+
+
+    def test_nullExhausterProvidesInterface(self):
+        """
+        L{NullExhauster} instances provide
+        L{_IExhaustsFileDescriptors}.
+        """
+        verifyObject(_IExhaustsFileDescriptors, self.NullExhauster())
+
+
+    def test_reactorStoppedOnSuccessfulConnection(self):
+        """
+        If the exhauster fails to trigger C{EMFILE} and a connection
+        reaches the server, the reactor is stopped and the test fails.
+        """
+        exhauster = self.NullExhauster()
+        serverFactory = [None]
+
+        def runReactor(reactor):
+            reactor.run()
+            proto = serverFactory[0].buildProtocol(
+                IPv4Address('TCP', '127.0.0.1', 4321))
+            proto.makeConnection(StringTransport())
+
+        def listen(reactor, factory):
+            port = reactor.listenTCP('127.0.0.1', 1234, factory)
+            factory.doStart()
+            serverFactory[0] = factory
+            return port
+
+        def connect(reactor, address, factory):
+            reactor.connectTCP('127.0.0.1', 0, factory)
+
+        exception = self.assertRaises(
+            self.testCase.failureException,
+            assertPeerClosedOnEMFILE,
+            testCase=self.testCase,
+            exhauster=exhauster,
+            reactor=self.reactor,
+            runReactor=runReactor,
+            listen=listen,
+            connect=connect,
+        )
+
+        self.assertIn("EMFILE", str(exception))
+        self.assertFalse(self.reactor.running)
+
+
+
 class StreamTransportTestsMixin(LogObserverMixin):
     """
     Mixin defining tests which apply to any port/connection based transport.
     """
+
     def test_startedListeningLogMessage(self):
         """
         When a port starts, a message including a description of the associated
@@ -645,7 +1423,59 @@ class StreamTransportTestsMixin(LogObserverMixin):
         self.assertFullyNewStyle(port)
 
 
-class ListenTCPMixin(object):
+    def test_closePeerOnEMFILE(self):
+        """
+        See L{assertPeerClosedOnEMFILE}.
+        """
+        assertPeerClosedOnEMFILE(
+            testCase=self,
+            exhauster=_ExhaustsFileDescriptors(),
+            reactor=self.buildReactor(),
+            runReactor=self.runReactor,
+            listen=self.getListeningPort,
+            connect=self.connectToListener,
+        )
+
+    if SKIP_EMFILE:
+        test_closePeerOnEMFILE.skip = SKIP_EMFILE
+
+
+
+class ConnectToTCPListenerMixin(object):
+    """
+    Provides L{connectToListener} for TCP transports.
+
+    @ivar LISTENER_HOST: The host on which the port is expected to be
+        listening.  This is specific to avoid compatibility issues
+        with Windows, which cannot connect to the wildcard host.
+    @type LISTENER_HOST: L{str}
+
+    @see: U{http://twistedmatrix.com/trac/ticket/1472}
+    """
+    LISTENER_HOST = '127.0.0.1'
+
+
+    def connectToListener(self, reactor, address, factory):
+        """
+        Connect to the given listening TCP port.
+
+        @param reactor: The reactor under test.
+        @type reactor: L{IReactorTCP}
+
+        @param address: The listening port's address.  Only the
+            C{port} component is used; see L{LISTENER_HOST}.
+        @type address: L{IPv4Address} or L{IPv6Address}
+
+        @param factory: The client factory.
+        @type factory: L{ClientFactory}
+
+        @return: The connector
+        """
+        return reactor.connectTCP(self.LISTENER_HOST, address.port, factory)
+
+
+
+class ListenTCPMixin(ConnectToTCPListenerMixin):
     """
     Mixin which uses L{IReactorTCP.listenTCP} to hand out listening TCP ports.
     """
@@ -657,10 +1487,10 @@ class ListenTCPMixin(object):
 
 
 
-class SocketTCPMixin(object):
+class SocketTCPMixin(ConnectToTCPListenerMixin):
     """
-    Mixin which uses L{IReactorSocket.adoptStreamPort} to hand out listening TCP
-    ports.
+    Mixin which uses L{IReactorSocket.adoptStreamPort} to hand out
+    listening TCP ports.
     """
     def getListeningPort(self, reactor, factory, port=0, interface=''):
         """
@@ -792,8 +1622,7 @@ class TCPPortTestsMixin(object):
         try:
             connect(client, (port.getHost().host, port.getHost().port))
         except socket.error as e:
-            errnum, message = e.args
-            self.assertIn(errnum, (errno.EINPROGRESS, errno.EWOULDBLOCK))
+            self.assertIn(e.errno, (errno.EINPROGRESS, errno.EWOULDBLOCK))
 
         self.runReactor(reactor)
 
@@ -821,8 +1650,12 @@ class TCPPortTestsMixin(object):
         interface = '::1'
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         observedAddress = self._buildProtocolAddressTest(client, interface)
+
+        peer = client.getsockname()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getsockname()[:2]), observedAddress)
+            IPv6Address('TCP', hostname, peer[1]), observedAddress)
     if ipv6Skip:
         test_buildProtocolIPv6Address.skip = ipv6Skip
 
@@ -836,8 +1669,12 @@ class TCPPortTestsMixin(object):
         interface = getLinkLocalIPv6Address()
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         observedAddress = self._buildProtocolAddressTest(client, interface)
+
+        peer = client.getsockname()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getsockname()[:2]), observedAddress)
+            IPv6Address('TCP', hostname, *peer[1:]), observedAddress)
     if ipv6Skip:
         test_buildProtocolIPv6AddressScopeID.skip = ipv6Skip
 
@@ -875,8 +1712,7 @@ class TCPPortTestsMixin(object):
         try:
             connect(client, (port.getHost().host, port.getHost().port))
         except socket.error as e:
-            errnum, message = e.args
-            self.assertIn(errnum, (errno.EINPROGRESS, errno.EWOULDBLOCK))
+            self.assertIn(e.errno, (errno.EINPROGRESS, errno.EWOULDBLOCK))
         self.runReactor(reactor)
         return factory.address
 
@@ -905,8 +1741,12 @@ class TCPPortTestsMixin(object):
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         hostAddress = self._serverGetConnectionAddressTest(
             client, interface, 'getHost')
+
+        peer = client.getpeername()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getpeername()[:2]), hostAddress)
+            IPv6Address('TCP', hostname, *peer[1:]), hostAddress)
     if ipv6Skip:
         test_serverGetHostOnIPv6.skip = ipv6Skip
 
@@ -922,8 +1762,12 @@ class TCPPortTestsMixin(object):
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         hostAddress = self._serverGetConnectionAddressTest(
             client, interface, 'getHost')
+
+        peer = client.getpeername()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getpeername()[:2]), hostAddress)
+            IPv6Address('TCP', hostname, *peer[1:]), hostAddress)
     if ipv6Skip:
         test_serverGetHostOnIPv6ScopeID.skip = ipv6Skip
 
@@ -952,8 +1796,12 @@ class TCPPortTestsMixin(object):
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         peerAddress = self._serverGetConnectionAddressTest(
             client, interface, 'getPeer')
+
+        peer = client.getsockname()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getsockname()[:2]), peerAddress)
+            IPv6Address('TCP', hostname, *peer[1:]), peerAddress)
     if ipv6Skip:
         test_serverGetPeerOnIPv6.skip = ipv6Skip
 
@@ -969,8 +1817,12 @@ class TCPPortTestsMixin(object):
         client = createTestSocket(self, socket.AF_INET6, socket.SOCK_STREAM)
         peerAddress = self._serverGetConnectionAddressTest(
             client, interface, 'getPeer')
+
+        peer = client.getsockname()
+        hostname = socket.getnameinfo(peer, socket.NI_NUMERICHOST)[0]
+
         self.assertEqual(
-            IPv6Address('TCP', *client.getsockname()[:2]), peerAddress)
+            IPv6Address('TCP', hostname, *peer[1:]), peerAddress)
     if ipv6Skip:
         test_serverGetPeerOnIPv6ScopeID.skip = ipv6Skip
 
@@ -1019,6 +1871,92 @@ class StopStartReadingProtocol(Protocol):
         self.data += data
         if len(self.data) == 4*4096:
             self.factory.stop.callback(self.data)
+
+
+
+def oneTransportTest(testMethod):
+    """
+    Decorate a L{ReactorBuilder} test function which tests one reactor and one
+    connected transport.  Run that test method in the context of
+    C{connectionMade}, and immediately drop the connection (and end the test)
+    when that completes.
+
+    @param testMethod: A unit test method on a L{ReactorBuilder} test suite;
+        taking two additional parameters; a C{reactor} as built by the
+        L{ReactorBuilder}, and an L{ITCPTransport} provider.
+    @type testMethod: 3-argument C{function}
+
+    @return: a no-argument test method.
+    @rtype: 1-argument C{function}
+    """
+    @wraps(testMethod)
+    def actualTestMethod(builder):
+        other = ConnectableProtocol()
+        class ServerProtocol(ConnectableProtocol):
+            def connectionMade(self):
+                try:
+                    testMethod(builder, self.reactor, self.transport)
+                finally:
+                    if self.transport is not None:
+                        self.transport.loseConnection()
+                    if other.transport is not None:
+                        other.transport.loseConnection()
+        serverProtocol = ServerProtocol()
+        runProtocolsWithReactor(builder, serverProtocol, other, TCPCreator())
+    return actualTestMethod
+
+
+
+def assertReading(testCase, reactor, transport):
+    """
+    Use the given test to assert that the given transport is actively reading
+    in the given reactor.
+
+    @note: Maintainers; for more information on why this is a function rather
+        than a method on a test case, see U{this document on how we structure
+        test tools
+        <http://twistedmatrix.com/trac/wiki/Design/KeepTestToolsOutOfFixtures>}
+
+    @param testCase: a test case to perform the assertion upon.
+    @type testCase: L{TestCase}
+
+    @param reactor: A reactor, possibly one providing L{IReactorFDSet}, or an
+        IOCP reactor.
+
+    @param transport: An L{ITCPTransport}
+    """
+    if IReactorFDSet.providedBy(reactor):
+        testCase.assertIn(transport, reactor.getReaders())
+    else:
+        # IOCP.
+        testCase.assertIn(transport, reactor.handles)
+        testCase.assertTrue(transport.reading)
+
+
+
+def assertNotReading(testCase, reactor, transport):
+    """
+    Use the given test to assert that the given transport is I{not} actively
+    reading in the given reactor.
+
+    @note: Maintainers; for more information on why this is a function rather
+        than a method on a test case, see U{this document on how we structure
+        test tools
+        <http://twistedmatrix.com/trac/wiki/Design/KeepTestToolsOutOfFixtures>}
+
+    @param testCase: a test case to perform the assertion upon.
+    @type testCase: L{TestCase}
+
+    @param reactor: A reactor, possibly one providing L{IReactorFDSet}, or an
+        IOCP reactor.
+
+    @param transport: An L{ITCPTransport}
+    """
+    if IReactorFDSet.providedBy(reactor):
+        testCase.assertNotIn(transport, reactor.getReaders())
+    else:
+        # IOCP.
+        testCase.assertFalse(transport.reading)
 
 
 
@@ -1076,6 +2014,42 @@ class TCPConnectionTestsBuilder(ReactorBuilder):
         d = DeferredList([cc.connect(cf), sf.ready]).addCallback(proceed, p)
         d.addErrback(log.err)
         self.runReactor(reactor)
+
+
+    @oneTransportTest
+    def test_resumeProducing(self, reactor, server):
+        """
+        When a L{Server} is connected, its C{resumeProducing} method adds it as
+        a reader to the reactor.
+        """
+        server.pauseProducing()
+        assertNotReading(self, reactor, server)
+        server.resumeProducing()
+        assertReading(self, reactor, server)
+
+
+    @oneTransportTest
+    def test_resumeProducingWhileDisconnecting(self, reactor, server):
+        """
+        When a L{Server} has already started disconnecting via
+        C{loseConnection}, its C{resumeProducing} method does not add it as a
+        reader to its reactor.
+        """
+        server.loseConnection()
+        server.resumeProducing()
+        assertNotReading(self, reactor, server)
+
+
+    @oneTransportTest
+    def test_resumeProducingWhileDisconnected(self, reactor, server):
+        """
+        When a L{Server} has already lost its connection, its
+        C{resumeProducing} method does not add it as a reader to its reactor.
+        """
+        server.connectionLost(Failure(Exception("dummy")))
+        assertNotReading(self, reactor, server)
+        server.resumeProducing()
+        assertNotReading(self, reactor, server)
 
 
     def test_connectionLostAfterPausedTransport(self):
@@ -1858,7 +2832,7 @@ class AbortConnectionMixin(object):
     """
     Unit tests for L{ITransport.abortConnection}.
     """
-    # Override in subclasses, should be a EndpointCreator instance:
+    # Override in subclasses, should be an EndpointCreator instance:
     endpoints = None
 
     def runAbortTest(self, clientClass, serverClass,
@@ -1886,9 +2860,7 @@ class AbortConnectionMixin(object):
 
         # Make sure everything was shutdown correctly:
         self.assertEqual(reactor.removeAll(), [])
-        # The reactor always has a timeout added in runReactor():
-        delayedCalls = reactor.getDelayedCalls()
-        self.assertEqual(len(delayedCalls), 1, map(str, delayedCalls))
+        self.assertEqual(reactor.getDelayedCalls(), [])
 
         if clientConnectionLostReason is not None:
             self.assertIsInstance(
@@ -2027,7 +2999,7 @@ class AbortConnectionMixin(object):
 
 
 
-class AbortConnectionTestCase(ReactorBuilder, AbortConnectionMixin):
+class AbortConnectionTests(ReactorBuilder, AbortConnectionMixin):
     """
     TCP-specific L{AbortConnectionMixin} tests.
     """
@@ -2035,11 +3007,11 @@ class AbortConnectionTestCase(ReactorBuilder, AbortConnectionMixin):
 
     endpoints = TCPCreator()
 
-globals().update(AbortConnectionTestCase.makeTestCaseClasses())
+globals().update(AbortConnectionTests.makeTestCaseClasses())
 
 
 
-class SimpleUtilityTestCase(TestCase):
+class SimpleUtilityTests(TestCase):
     """
     Simple, direct tests for helpers within L{twisted.internet.tcp}.
     """
@@ -2084,8 +3056,261 @@ class SimpleUtilityTestCase(TestCase):
         # integers, because the whole point of getaddrinfo is that you can never
         # know a-priori know _anything_ about the network interfaces of the
         # computer that you're on and you have to ask it.
-        self.assertIsInstance(result[2], int) # flow info
-        self.assertIsInstance(result[3], int) # scope id
+        self.assertIsInstance(result[2], (int, long)) # flow info
+        self.assertIsInstance(result[3], (int, long)) # scope id
         # but, luckily, IP presentation format and what it means to be a port
         # number are a little better specified.
         self.assertEqual(result[:2], ("::1", 2))
+
+
+
+class BuffersLogsTests(SynchronousTestCase):
+    """
+    Tests for L{_BuffersLogs}.
+    """
+
+    def setUp(self):
+        self.namespace = "name.space"
+        self.events = []
+        self.logBuffer = _BuffersLogs(self.namespace, self.events.append)
+
+
+    def test_buffersInBlock(self):
+        """
+        The context manager's logger does not log to provided observer
+        inside the block.
+        """
+        with self.logBuffer as logger:
+            logger.info("An event")
+            self.assertFalse(self.events)
+
+
+    def test_flushesOnExit(self):
+        """
+        The context manager flushes its buffered logs when the block
+        terminates without an exception.
+        """
+        with self.logBuffer as logger:
+            logger.info("An event")
+            self.assertFalse(self.events)
+        self.assertEqual(1, len(self.events))
+        [event] = self.events
+        self.assertEqual(event['log_format'], "An event")
+        self.assertEqual(event['log_namespace'], self.namespace)
+
+
+    def test_flushesOnExitWithException(self):
+        """
+        The context manager flushes its buffered logs when the block
+        terminates because of an exception.
+        """
+        class TestException(Exception):
+            """
+            An exception only raised by this test.
+            """
+
+        with self.assertRaises(TestException):
+            with self.logBuffer as logger:
+                logger.info("An event")
+                self.assertFalse(self.events)
+                raise TestException()
+
+        self.assertEqual(1, len(self.events))
+        [event] = self.events
+        self.assertEqual(event['log_format'], "An event")
+        self.assertEqual(event['log_namespace'], self.namespace)
+
+
+
+class FileDescriptorReservationTests(SynchronousTestCase):
+    """
+    Tests for L{_FileDescriptorReservation}.
+    """
+    skip = SKIP_EMFILE
+
+    def setUp(self):
+        self.reservedFileObjects = []
+        self.tempfile = self.mktemp()
+
+        def fakeFileFactory():
+            self.reservedFileObjects.append(open(self.tempfile, 'w'))
+            return self.reservedFileObjects[-1]
+
+        self.reservedFD = _FileDescriptorReservation(fakeFileFactory)
+
+
+    def test_providesInterface(self):
+        """
+        L{_FileDescriptorReservation} instances provide
+        L{_IFileDescriptorReservation}.
+        """
+        verifyObject(_IFileDescriptorReservation, self.reservedFD)
+
+
+    def test_reserveOpensFileOnce(self):
+        """
+        Multiple acquisitions without releases open the reservation
+        file exactly once.
+        """
+        self.assertEqual(len(self.reservedFileObjects), 0)
+
+        for _ in range(10):
+            self.reservedFD.reserve()
+            self.assertEqual(len(self.reservedFileObjects), 1)
+            self.assertFalse(self.reservedFileObjects[0].closed)
+
+
+    def test_reserveEMFILELogged(self):
+        """
+        If reserving the file descriptor fails because of C{EMFILE},
+        the exception is suppressed but logged and the reservation
+        remains unavailable.
+        """
+        exhauster = _ExhaustsFileDescriptors()
+        self.addCleanup(exhauster.release)
+        exhauster.exhaust()
+
+        self.assertFalse(self.reservedFD.available())
+        self.reservedFD.reserve()
+        self.assertFalse(self.reservedFD.available())
+
+        errors = self.flushLoggedErrors(OSError, IOError)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].value.errno, errno.EMFILE)
+
+
+    def test_reserveRaisesNonEMFILEExceptions(self):
+        """
+        Any exception raised while opening the reserve file that is
+        not an L{OSError} or L{IOError} whose errno is C{EMFILE} is
+        allowed through to the caller.
+        """
+        for errorClass in (OSError, IOError, ValueError):
+            # Note that the ValueError will present the errno as its
+            # value.
+            def failsWith(errorClass=errorClass):
+                raise errorClass(errno.EMFILE + 1, "message")
+
+            reserveFD = _FileDescriptorReservation(failsWith)
+            self.assertRaises(errorClass, reserveFD.reserve)
+
+
+    def test_available(self):
+        """
+        The reservation is available after the file descriptor is
+        reserved.
+        """
+        self.assertFalse(self.reservedFD.available())
+        self.reservedFD.reserve()
+        self.assertTrue(self.reservedFD.available())
+
+
+    def test_enterFailsWithoutFile(self):
+        """
+        A reservation without an open file used as a context manager
+        raises a L{RuntimeError}.
+        """
+        with self.assertRaises(RuntimeError):
+            with self.reservedFD:
+                """This string cannot raise an exception."""
+
+    def test_enterClosesFileExitOpensFile(self):
+        """
+        Entering a reservation closes its file for the duration of the
+        context manager's block.
+        """
+        self.reservedFD.reserve()
+        self.assertTrue(self.reservedFD.available())
+        with self.reservedFD:
+            self.assertFalse(self.reservedFD.available())
+        self.assertTrue(self.reservedFD.available())
+
+
+    def test_exitOpensFileOnException(self):
+        """
+        An exception raised within a reservation context manager's
+        block does not prevent the file from being reopened.
+        """
+        class TestException(Exception):
+            """
+            An exception only used by this test.
+            """
+
+        self.reservedFD.reserve()
+        with self.assertRaises(TestException):
+            with self.reservedFD:
+                raise TestException()
+
+
+    def test_exitSuppressesReservationException(self):
+        """
+        An exception raised while re-opening the reserve file exiting
+        a reservation's context manager block is suppressed but
+        logged, allowing an exception raised within the block through.
+        """
+        class AllowedException(Exception):
+            """
+            The exception allowed out of the block.
+            """
+
+        class SuppressedException(Exception):
+            """
+            An exception raised by the file descriptor factory.
+            """
+
+        called = [False]
+
+        def failsWithSuppressedExceptionAfterSecondOpen():
+            if called[0]:
+                raise SuppressedException()
+            else:
+                called[0] = True
+                return io.BytesIO()
+
+        reservedFD = _FileDescriptorReservation(
+            failsWithSuppressedExceptionAfterSecondOpen)
+
+        reservedFD.reserve()
+        self.assertTrue(reservedFD.available())
+
+        with self.assertRaises(AllowedException):
+            with reservedFD:
+                raise AllowedException()
+
+        errors = self.flushLoggedErrors(SuppressedException)
+        self.assertEqual(len(errors), 1)
+
+
+
+class NullFileDescriptorReservationTests(SynchronousTestCase):
+    """
+    Tests for L{_NullFileDescriptorReservation}.
+    """
+
+    def setUp(self):
+        self.nullReservedFD = _NullFileDescriptorReservation()
+
+
+    def test_providesInterface(self):
+        """
+        L{_NullFileDescriptorReservation} provides
+        L{_IFileDescriptorReservation}.
+        """
+        verifyObject(_IFileDescriptorReservation, self.nullReservedFD)
+
+
+    def test_available(self):
+        """
+        The null reserved file descriptor is never available.
+        """
+        self.assertFalse(self.nullReservedFD.available())
+
+
+    def test_contextManager(self):
+        """
+        The null reserved file descriptor is a null context manager.
+        """
+        self.assertFalse(self.nullReservedFD.available())
+        with self.nullReservedFD:
+            self.assertFalse(self.nullReservedFD.available())
+        self.assertFalse(self.nullReservedFD.available())

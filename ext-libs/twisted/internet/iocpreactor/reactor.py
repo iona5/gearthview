@@ -8,7 +8,7 @@ Reactor that uses IO completion ports
 
 import warnings, socket, sys
 
-from zope.interface import implements
+from zope.interface import implementer
 
 from twisted.internet import base, interfaces, main, error
 from twisted.python import log, failure
@@ -45,11 +45,12 @@ _NO_FILEDESC = error.ConnectionFdescWentAway('Filedescriptor went away')
 
 
 
+@implementer(interfaces.IReactorTCP, interfaces.IReactorUDP,
+             interfaces.IReactorMulticast, interfaces.IReactorProcess,
+             *_extraInterfaces)
 class IOCPReactor(base._SignalReactorMixin, base.ReactorBase,
                   _ThreadedWin32EventsMixin):
-    implements(interfaces.IReactorTCP, interfaces.IReactorUDP,
-               interfaces.IReactorMulticast, interfaces.IReactorProcess,
-               *_extraInterfaces)
+
 
     port = None
 
@@ -97,25 +98,25 @@ class IOCPReactor(base._SignalReactorMixin, base.ReactorBase,
             timeout = MAX_TIMEOUT
         else:
             timeout = min(MAX_TIMEOUT, int(1000*timeout))
-        rc, bytes, key, evt = self.port.getEvent(timeout)
+        rc, numBytes, key, evt = self.port.getEvent(timeout)
         while 1:
             if rc == WAIT_TIMEOUT:
                 break
             if key != KEY_WAKEUP:
                 assert key == KEY_NORMAL
                 log.callWithLogger(evt.owner, self._callEventCallback,
-                                   rc, bytes, evt)
+                                   rc, numBytes, evt)
                 processed_events += 1
             if processed_events >= EVENTS_PER_LOOP:
                 break
-            rc, bytes, key, evt = self.port.getEvent(0)
+            rc, numBytes, key, evt = self.port.getEvent(0)
 
 
-    def _callEventCallback(self, rc, bytes, evt):
+    def _callEventCallback(self, rc, numBytes, evt):
         owner = evt.owner
         why = None
         try:
-            evt.callback(rc, bytes, evt)
+            evt.callback(rc, numBytes, evt)
             handfn = getattr(owner, 'getFileHandle', None)
             if not handfn:
                 why = _NO_GETHANDLE
@@ -270,4 +271,3 @@ def install():
 
 
 __all__ = ['IOCPReactor', 'install']
-

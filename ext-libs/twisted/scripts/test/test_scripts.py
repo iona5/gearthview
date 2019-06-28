@@ -37,17 +37,16 @@ def outputFromPythonScript(script, *args):
         from C{stderr}.
     @rtype: L{bytes}
     """
-    nullInput = file(devnull, "rb")
-    nullError = file(devnull, "wb")
-    stdout = Popen([executable, script.path] + list(args),
-                   stdout=PIPE, stderr=nullError, stdin=nullInput).stdout.read()
-    nullInput.close()
-    nullError.close()
+    with open(devnull, "rb") as nullInput, open(devnull, "wb") as nullError:
+        process = Popen(
+            [executable, script.path] + list(args),
+            stdout=PIPE, stderr=nullError, stdin=nullInput)
+        stdout = process.communicate()[0]
     return stdout
 
 
 
-class ScriptTestsMixin:
+class ScriptTestsMixin(object):
     """
     Mixin for L{TestCase} subclasses which defines a helper function for testing
     a Twisted-using script.
@@ -111,10 +110,6 @@ class ScriptTests(TestCase, ScriptTestsMixin):
         self.assertIn(repr(testDir.path), output)
 
 
-    def test_manhole(self):
-        self.scriptTest("manhole")
-
-
     def test_trial(self):
         self.scriptTest("trial")
 
@@ -142,60 +137,12 @@ class ScriptTests(TestCase, ScriptTestsMixin):
         self.scriptTest("pyhtmlizer")
 
 
-    def test_tap2rpm(self):
-        self.scriptTest("tap2rpm")
 
-
-    def test_tap2deb(self):
-        self.scriptTest("tap2deb")
-
-
-    def test_tapconvert(self):
-        self.scriptTest("tapconvert")
-
-
-    def test_deprecatedTkunzip(self):
-        """
-        The entire L{twisted.scripts.tkunzip} module, part of the old Windows
-        installer tool chain, is deprecated.
-        """
-        from twisted.scripts import tkunzip
-        warnings = self.flushWarnings(
-            offendingFunctions=[self.test_deprecatedTkunzip])
-        self.assertEqual(DeprecationWarning, warnings[0]['category'])
-        self.assertEqual(
-            "twisted.scripts.tkunzip was deprecated in Twisted 11.1.0: "
-            "Seek unzipping software outside of Twisted.",
-            warnings[0]['message'])
-        self.assertEqual(1, len(warnings))
-
-
-    def test_deprecatedTapconvert(self):
-        """
-        The entire L{twisted.scripts.tapconvert} module is deprecated.
-        """
-        from twisted.scripts import tapconvert
-        warnings = self.flushWarnings(
-            offendingFunctions=[self.test_deprecatedTapconvert])
-        self.assertEqual(DeprecationWarning, warnings[0]['category'])
-        self.assertEqual(
-            "twisted.scripts.tapconvert was deprecated in Twisted 12.1.0: "
-            "tapconvert has been deprecated.",
-            warnings[0]['message'])
-        self.assertEqual(1, len(warnings))
-
-
-
-class ZshIntegrationTestCase(TestCase, ZshScriptTestMixin):
+class ZshIntegrationTests(TestCase, ZshScriptTestMixin):
     """
     Test that zsh completion functions are generated without error
     """
     generateFor = [('twistd', 'twisted.scripts.twistd.ServerOptions'),
                    ('trial', 'twisted.scripts.trial.Options'),
                    ('pyhtmlizer', 'twisted.scripts.htmlizer.Options'),
-                   ('tap2rpm', 'twisted.scripts.tap2rpm.MyOptions'),
-                   ('tap2deb', 'twisted.scripts.tap2deb.MyOptions'),
-                   ('tapconvert', 'twisted.scripts.tapconvert.ConvertOptions'),
-                   ('manhole', 'twisted.scripts.manhole.MyOptions')
                    ]
-

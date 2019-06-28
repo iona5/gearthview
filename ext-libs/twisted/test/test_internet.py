@@ -15,6 +15,7 @@ from twisted.python.compat import _PY3
 from twisted.trial import unittest
 from twisted.internet import reactor, protocol, error, abstract, defer
 from twisted.internet import interfaces, base
+from twisted.internet.tcp import Connector
 
 try:
     from twisted.internet import ssl
@@ -23,8 +24,7 @@ except ImportError:
 if ssl and not ssl.supported:
     ssl = None
 
-from twisted.internet.defer import Deferred, maybeDeferred
-from twisted.python import runtime
+from twisted.internet.defer import Deferred, passthru
 if not _PY3:
     from twisted.python import util
 
@@ -346,7 +346,7 @@ class ThreePhaseEventTests(unittest.TestCase):
 
 
 
-class SystemEventTestCase(unittest.TestCase):
+class SystemEventTests(unittest.TestCase):
     """
     Tests for the reactor's implementation of the C{fireSystemEvent},
     C{addSystemEventTrigger}, and C{removeSystemEventTrigger} methods of the
@@ -650,7 +650,7 @@ class SystemEventTestCase(unittest.TestCase):
 
 
 
-class TimeTestCase(unittest.TestCase):
+class TimeTests(unittest.TestCase):
     """
     Tests for the IReactorTime part of the reactor.
     """
@@ -676,7 +676,8 @@ class TimeTestCase(unittest.TestCase):
 
     def test_callLaterUsesReactorSecondsInDelayedCall(self):
         """
-        L{reactor.callLater} should use the reactor's seconds factory
+        L{reactor.callLater<twisted.internet.interfaces.IReactorTime.callLater>}
+        should use the reactor's seconds factory
         to produce the time at which the DelayedCall will be called.
         """
         oseconds = reactor.seconds
@@ -686,11 +687,13 @@ class TimeTestCase(unittest.TestCase):
             self.assertEqual(call.getTime(), 105)
         finally:
             reactor.seconds = oseconds
+        call.cancel()
 
 
     def test_callLaterUsesReactorSecondsAsDelayedCallSecondsFactory(self):
         """
-        L{reactor.callLater} should propagate its own seconds factory
+        L{reactor.callLater<twisted.internet.interfaces.IReactorTime.callLater>}
+        should propagate its own seconds factory
         to the DelayedCall to use as its own seconds factory.
         """
         oseconds = reactor.seconds
@@ -700,6 +703,7 @@ class TimeTestCase(unittest.TestCase):
             self.assertEqual(call.seconds(), 100)
         finally:
             reactor.seconds = oseconds
+        call.cancel()
 
 
     def test_callLater(self):
@@ -711,6 +715,17 @@ class TimeTestCase(unittest.TestCase):
         reactor.callLater(0, d.callback, None)
         d.addCallback(self.assertEqual, None)
         return d
+
+
+    def test_callLaterReset(self):
+        """
+        A L{DelayedCall} that is reset will be scheduled at the new time.
+        """
+        call = reactor.callLater(2, passthru, passthru)
+        self.addCleanup(call.cancel)
+        origTime = call.time
+        call.reset(1)
+        self.assertNotEqual(call.time, origTime)
 
 
     def test_cancelDelayedCall(self):
@@ -787,56 +802,10 @@ class TimeTestCase(unittest.TestCase):
     def testCallLaterTime(self):
         d = reactor.callLater(10, lambda: None)
         try:
-            self.failUnless(d.getTime() - (time.time() + 10) < 1)
+            self.assertTrue(d.getTime() - (time.time() + 10) < 1)
         finally:
             d.cancel()
 
-    def testCallLaterOrder(self):
-        l = []
-        l2 = []
-        def f(x):
-            l.append(x)
-        def f2(x):
-            l2.append(x)
-        def done():
-            self.assertEqual(l, range(20))
-        def done2():
-            self.assertEqual(l2, range(10))
-
-        for n in range(10):
-            reactor.callLater(0, f, n)
-        for n in range(10):
-            reactor.callLater(0, f, n+10)
-            reactor.callLater(0.1, f2, n)
-
-        reactor.callLater(0, done)
-        reactor.callLater(0.1, done2)
-        d = Deferred()
-        reactor.callLater(0.2, d.callback, None)
-        return d
-
-    testCallLaterOrder.todo = "See bug 1396"
-    testCallLaterOrder.skip = "Trial bug, todo doesn't work! See bug 1397"
-    def testCallLaterOrder2(self):
-        # This time destroy the clock resolution so that it fails reliably
-        # even on systems that don't have a crappy clock resolution.
-
-        def seconds():
-            return int(time.time())
-
-        base_original = base.seconds
-        runtime_original = runtime.seconds
-        base.seconds = seconds
-        runtime.seconds = seconds
-
-        def cleanup(x):
-            runtime.seconds = runtime_original
-            base.seconds = base_original
-            return x
-        return maybeDeferred(self.testCallLaterOrder).addBoth(cleanup)
-
-    testCallLaterOrder2.todo = "See bug 1396"
-    testCallLaterOrder2.skip = "Trial bug, todo doesn't work! See bug 1397"
 
     def testDelayedCallStringification(self):
         # Mostly just make sure str() isn't going to raise anything for
@@ -875,7 +844,8 @@ class TimeTestCase(unittest.TestCase):
         self.assertEqual(dc.getTime(), 13)
 
 
-class CallFromThreadTests(unittest.TestCase):
+
+class CallFromThreadStopsAndWakeUpTests(unittest.TestCase):
     def testWakeUp(self):
         # Make sure other threads can wake up the reactor
         d = Deferred()
@@ -898,7 +868,7 @@ class CallFromThreadTests(unittest.TestCase):
 
     def _callFromThreadCallback2(self, d):
         try:
-            self.assert_(self.stopped)
+            self.assertTrue(self.stopped)
         except:
             # Send the error to the deferred
             d.errback()
@@ -917,7 +887,7 @@ class CallFromThreadTests(unittest.TestCase):
         return d
 
 
-class DelayedTestCase(unittest.TestCase):
+class DelayedTests(unittest.TestCase):
     def setUp(self):
         self.finished = 0
         self.counter = 0
@@ -942,7 +912,8 @@ class DelayedTestCase(unittest.TestCase):
                 missing.append(dc)
         if missing:
             self.finished = 1
-        self.failIf(missing, "Should have been missing no calls, instead was missing " + repr(missing))
+        self.assertFalse(missing, "Should have been missing no calls, instead "
+                         + "was missing " + repr(missing))
 
     def callback(self, tag):
         del self.timers[tag]
@@ -991,10 +962,10 @@ class DelayedTestCase(unittest.TestCase):
         L{IDelayedCall.active} returns False once the call has run.
         """
         dcall = reactor.callLater(0.01, self.deferred.callback, True)
-        self.assertEqual(dcall.active(), True)
+        self.assertTrue(dcall.active())
 
         def checkDeferredCall(success):
-            self.assertEqual(dcall.active(), False)
+            self.assertFalse(dcall.active())
             return success
 
         self.deferred.addCallback(checkDeferredCall)
@@ -1004,6 +975,7 @@ class DelayedTestCase(unittest.TestCase):
 
 
 resolve_helper = """
+from __future__ import print_function
 import %(reactor)s
 %(reactor)s.install()
 from twisted.internet import reactor
@@ -1015,10 +987,10 @@ class Foo:
     def start(self):
         reactor.resolve('localhost').addBoth(self.done)
     def done(self, res):
-        print 'done', res
+        print('done', res)
         reactor.stop()
     def failed(self):
-        print 'failed'
+        print('failed')
         self.timer = None
         reactor.stop()
 f = Foo()
@@ -1044,19 +1016,18 @@ class ChildResolveProtocol(protocol.ProcessProtocol):
         self.onCompletion = None
 
 
-class Resolve(unittest.TestCase):
+class ResolveTests(unittest.TestCase):
     def testChildResolve(self):
         # I've seen problems with reactor.run under gtk2reactor. Spawn a
         # child which just does reactor.resolve after the reactor has
         # started, fail if it does not complete in a timely fashion.
         helperPath = os.path.abspath(self.mktemp())
-        helperFile = open(helperPath, 'w')
+        with open(helperPath, 'w') as helperFile:
 
-        # Eeueuuggg
-        reactorName = reactor.__module__
+            # Eeueuuggg
+            reactorName = reactor.__module__
 
-        helperFile.write(resolve_helper % {'reactor': reactorName})
-        helperFile.close()
+            helperFile.write(resolve_helper % {'reactor': reactorName})
 
         env = os.environ.copy()
         env['PYTHONPATH'] = os.pathsep.join(sys.path)
@@ -1070,23 +1041,29 @@ class Resolve(unittest.TestCase):
             (reason, output, error) = result
             # If the output is "done 127.0.0.1\n" we don't really care what
             # else happened.
-            output = ''.join(output)
-            if output != 'done 127.0.0.1\n':
+            output = b''.join(output)
+            if _PY3:
+                expected_output = (b'done 127.0.0.1' +
+                                   os.linesep.encode("ascii"))
+            else:
+                expected_output = b'done 127.0.0.1\n'
+            if output != expected_output:
                 self.fail((
                     "The child process failed to produce the desired results:\n"
                     "   Reason for termination was: %r\n"
                     "   Output stream was: %r\n"
-                    "   Error stream was: %r\n") % (reason.getErrorMessage(), output, ''.join(error)))
+                    "   Error stream was: %r\n") % (reason.getErrorMessage(), output, b''.join(error)))
 
         helperDeferred.addCallback(cbFinished)
         return helperDeferred
 
 if not interfaces.IReactorProcess(reactor, None):
-    Resolve.skip = "cannot run test: reactor doesn't support IReactorProcess"
+    ResolveTests.skip = (
+        "cannot run test: reactor doesn't support IReactorProcess")
 
 
 
-class CallFromThreadTestCase(unittest.TestCase):
+class CallFromThreadTests(unittest.TestCase):
     """
     Task scheduling from threads tests.
     """
@@ -1168,13 +1145,13 @@ class MyFactory(protocol.Factory):
     protocol = MyProtocol
 
 
-class ProtocolTestCase(unittest.TestCase):
+class ProtocolTests(unittest.TestCase):
 
     def testFactory(self):
         factory = MyFactory()
         protocol = factory.buildProtocol(None)
         self.assertEqual(protocol.factory, factory)
-        self.assert_( isinstance(protocol, factory.protocol) )
+        self.assertIsInstance(protocol, factory.protocol)
 
 
 class DummyProducer(object):
@@ -1259,7 +1236,7 @@ class ReentrantProducer(DummyProducer):
 
 
 
-class TestProducer(unittest.TestCase):
+class ProducerTests(unittest.TestCase):
     """
     Test abstract.FileDescriptor's consumer interface.
     """
@@ -1388,7 +1365,7 @@ class TestProducer(unittest.TestCase):
 
 
 
-class PortStringification(unittest.TestCase):
+class PortStringificationTests(unittest.TestCase):
     if interfaces.IReactorTCP(reactor, None) is not None:
         def testTCP(self):
             p = reactor.listenTCP(0, protocol.ServerFactory())
@@ -1417,3 +1394,12 @@ class PortStringification(unittest.TestCase):
         if _PY3:
             testSSL.skip = ("Re-enable once the Python 3 SSL port is done.")
 
+
+
+class ConnectorReprTests(unittest.TestCase):
+    def test_tcp_repr(self):
+        c = Connector('localhost', 666, object(), 0, object())
+        expect = "<twisted.internet.tcp.Connector instance at 0x%x " \
+            "disconnected %s>"
+        expect = expect % (id(c), c.getDestination())
+        self.assertEqual(repr(c), expect)

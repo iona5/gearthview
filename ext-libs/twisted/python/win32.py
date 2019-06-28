@@ -16,13 +16,6 @@ from __future__ import division, absolute_import
 import re
 import os
 
-try:
-    import win32api
-    import win32con
-except ImportError:
-    pass
-
-from twisted.python.runtime import platform
 
 # http://msdn.microsoft.com/library/default.asp?url=/library/en-us/debug/base/system_error_codes.asp
 ERROR_FILE_NOT_FOUND = 2
@@ -42,32 +35,6 @@ try:
     WindowsError = WindowsError
 except NameError:
     WindowsError = FakeWindowsError
-
-# XXX fix this to use python's builtin _winreg?
-
-def getProgramsMenuPath():
-    """
-    Get the path to the Programs menu.
-
-    Probably will break on non-US Windows.
-
-    @return: the filesystem location of the common Start Menu->Programs.
-    @rtype: L{str}
-    """
-    if not platform.isWindows():
-        return "C:\\Windows\\Start Menu\\Programs"
-    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders'
-    hShellFolders = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
-                                          keyname, 0, win32con.KEY_READ)
-    return win32api.RegQueryValueEx(hShellFolders, 'Common Programs')[0]
-
-
-def getProgramFilesPath():
-    """Get the path to the Program Files folder."""
-    keyname = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion'
-    currentV = win32api.RegOpenKeyEx(win32con.HKEY_LOCAL_MACHINE,
-                                     keyname, 0, win32con.KEY_READ)
-    return win32api.RegQueryValueEx(currentV, 'ProgramFilesDir')[0]
 
 
 _cmdLineQuoteRe = re.compile(r'(\\*)"')
@@ -113,7 +80,7 @@ class _ErrorFormatter(object):
         L{win32api.FormatMessage}).
 
     @ivar errorTab: A mapping from integer error numbers to C{str} messages
-        which correspond to those erorrs (like L{socket.errorTab}).
+        which correspond to those erorrs (like I{socket.errorTab}).
     """
     def __init__(self, WinError, FormatMessage, errorTab):
         self.winError = WinError

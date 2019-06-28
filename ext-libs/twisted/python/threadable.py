@@ -109,14 +109,14 @@ def getThreadID():
 
 
 def isInIOThread():
-    """Are we in the thread responsable for I/O requests (the event loop)?
+    """Are we in the thread responsible for I/O requests (the event loop)?
     """
     return ioThread == getThreadID()
 
 
 
 def registerAsIOThread():
-    """Mark the current thread as responsable for I/O requests.
+    """Mark the current thread as responsible for I/O requests.
     """
     global ioThread
     ioThread = getThreadID()
@@ -124,7 +124,9 @@ def registerAsIOThread():
 
 ioThread = None
 threaded = False
-
+# Define these globals which might be overwritten in init().
+_synchLockCreator = None
+XLock = None
 
 
 try:

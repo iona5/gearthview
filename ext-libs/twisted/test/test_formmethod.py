@@ -11,7 +11,7 @@ from twisted.trial import unittest
 from twisted.python import formmethod
 
 
-class ArgumentTestCase(unittest.TestCase):
+class ArgumentTests(unittest.TestCase):
 
     def argTest(self, argKlass, testPairs, badValues, *args, **kwargs):
         arg = argKlass("name", *args, **kwargs)
@@ -71,7 +71,7 @@ class ArgumentTestCase(unittest.TestCase):
         self.assertEqual(arg.coerce("something"), "something")
         self.assertRaises(formmethod.InputError, arg.coerce, None)
         arg2 = formmethod.File("name")
-        self.assertEqual(arg2.coerce(None), None)
+        self.assertIsNone(arg2.coerce(None))
 
 
     def testDate(self):

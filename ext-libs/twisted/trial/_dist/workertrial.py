@@ -10,11 +10,24 @@ the workers.
 @since: 12.3
 """
 
-import _preamble
-
 import sys
 import os
 import errno
+
+
+
+def _setupPath(environ):
+    """
+    Override C{sys.path} with what the parent passed in B{TRIAL_PYTHONPATH}.
+
+    @see: twisted.trial._dist.disttrial.DistTrialRunner.launchWorkerProcesses
+    """
+    if 'TRIAL_PYTHONPATH' in environ:
+        sys.path[:] = environ['TRIAL_PYTHONPATH'].split(os.pathsep)
+
+
+_setupPath(os.environ)
+
 
 from twisted.internet.protocol import FileWrapper
 from twisted.python.log import startLoggingWithObserver, textFromEventDict
@@ -61,8 +74,8 @@ def main(_fdopen=os.fdopen):
     from twisted.trial._dist.worker import WorkerProtocol
     workerProtocol = WorkerProtocol(config['force-gc'])
 
-    protocolIn = _fdopen(_WORKER_AMP_STDIN)
-    protocolOut = _fdopen(_WORKER_AMP_STDOUT, 'w')
+    protocolIn = _fdopen(_WORKER_AMP_STDIN, 'rb')
+    protocolOut = _fdopen(_WORKER_AMP_STDOUT, 'wb')
     workerProtocol.makeConnection(FileWrapper(protocolOut))
 
     observer = WorkerLogObserver(workerProtocol)
@@ -71,13 +84,14 @@ def main(_fdopen=os.fdopen):
     while True:
         try:
             r = protocolIn.read(1)
-        except IOError, e:
+        except IOError as e:
             if e.args[0] == errno.EINTR:
-                sys.exc_clear()
+                if sys.version_info < (3, 0):
+                    sys.exc_clear()
                 continue
             else:
                 raise
-        if r == '':
+        if r == b'':
             break
         else:
             workerProtocol.dataReceived(r)

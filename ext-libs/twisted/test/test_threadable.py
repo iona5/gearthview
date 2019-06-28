@@ -35,7 +35,7 @@ class TestObject:
 
 threadable.synchronize(TestObject)
 
-class SynchronizationTestCase(unittest.SynchronousTestCase):
+class SynchronizationTests(unittest.SynchronousTestCase):
     def setUp(self):
         """
         Reduce the CPython check interval so that thread switches happen much
@@ -113,13 +113,13 @@ class SynchronizationTestCase(unittest.SynchronousTestCase):
 
 
 
-class SerializationTestCase(unittest.SynchronousTestCase):
+class SerializationTests(unittest.SynchronousTestCase):
     def testPickling(self):
         lock = threadable.XLock()
         lockType = type(lock)
         lockPickle = pickle.dumps(lock)
         newLock = pickle.loads(lockPickle)
-        self.assertTrue(isinstance(newLock, lockType))
+        self.assertIsInstance(newLock, lockType)
 
     if threadingSkip is not None:
         testPickling.skip = threadingSkip
@@ -129,4 +129,4 @@ class SerializationTestCase(unittest.SynchronousTestCase):
         lockPickle = b'ctwisted.python.threadable\nunpickle_lock\np0\n(tp1\nRp2\n.'
         lock = pickle.loads(lockPickle)
         newPickle = pickle.dumps(lock, 2)
-        newLock = pickle.loads(newPickle)
+        pickle.loads(newPickle)

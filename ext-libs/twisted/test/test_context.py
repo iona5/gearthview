@@ -11,16 +11,16 @@ from twisted.trial.unittest import SynchronousTestCase
 
 from twisted.python import context
 
-class ContextTest(SynchronousTestCase):
+class ContextTests(SynchronousTestCase):
     """
     Tests for the module-scope APIs for L{twisted.python.context}.
     """
     def test_notPresentIfNotSet(self):
         """
         Arbitrary keys which have not been set in the context have an associated
-        value of C{None}.
+        value of L{None}.
         """
-        self.assertEqual(context.get("x"), None)
+        self.assertIsNone(context.get("x"))
 
 
     def test_setByCall(self):
@@ -37,7 +37,7 @@ class ContextTest(SynchronousTestCase):
         call are no longer associated with the values from that call.
         """
         context.call({"x": "y"}, lambda: None)
-        self.assertEqual(context.get("x"), None)
+        self.assertIsNone(context.get("x"))
 
 
     def test_setDefault(self):

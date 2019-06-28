@@ -16,7 +16,8 @@ from zope.interface.verify import verifyObject
 from twisted.python.compat import _PY3, iterbytes
 from twisted.trial import unittest
 from twisted.protocols import basic
-from twisted.internet import protocol, error, task
+from twisted.python import reflect
+from twisted.internet import protocol, task
 from twisted.internet.interfaces import IProducer
 from twisted.test import proto_helpers
 
@@ -149,7 +150,8 @@ class LineOnlyTester(basic.LineOnlyReceiver):
         self.received.append(line)
 
 
-class LineReceiverTestCase(unittest.SynchronousTestCase):
+
+class LineReceiverTests(unittest.SynchronousTestCase):
     """
     Test L{twisted.protocols.basic.LineReceiver}, using the C{LineTester}
     wrapper.
@@ -218,7 +220,7 @@ a'''
 
     rawpauseOutput1 = [b'twiddle1', b'twiddle2', b'len 5', b'rawpause', b'']
     rawpauseOutput2 = [b'twiddle1', b'twiddle2', b'len 5', b'rawpause',
-                        b'12345', b'twiddle3']
+                       b'12345', b'twiddle3']
 
 
     def test_rawPausing(self):
@@ -264,8 +266,8 @@ a'''
         t = proto_helpers.StringIOWithoutClosing()
         a.makeConnection(protocol.FileWrapper(t))
         a.dataReceived(b'produce\nhello world\nunproduce\ngoodbye\n')
-        self.assertEqual(a.received,
-                          [b'produce', b'hello world', b'unproduce', b'goodbye'])
+        self.assertEqual(
+            a.received, [b'produce', b'hello world', b'unproduce', b'goodbye'])
 
 
     def test_clearLineBuffer(self):
@@ -314,16 +316,46 @@ a'''
         self.assertTrue(transport.disconnecting)
 
 
-    def test_maximumLineLengthRemaining(self):
+    def test_maximumLineLengthPartialDelimiter(self):
         """
-        C{LineReceiver} disconnects the transport it if receives a non-finished
-        line longer than its C{MAX_LENGTH}.
+        C{LineReceiver} doesn't disconnect the transport when it
+        receives a finished line as long as its C{MAX_LENGTH}, when
+        the second-to-last packet ended with a pattern that could have
+        been -- and turns out to have been -- the start of a
+        delimiter, and that packet causes the total input to exceed
+        C{MAX_LENGTH} + len(delimiter).
+        """
+        proto = LineTester()
+        proto.MAX_LENGTH = 4
+        t = proto_helpers.StringTransport()
+        proto.makeConnection(t)
+
+        line = b'x' * (proto.MAX_LENGTH - 1)
+        proto.dataReceived(line)
+        proto.dataReceived(proto.delimiter[:-1])
+        proto.dataReceived(proto.delimiter[-1:] + line)
+        self.assertFalse(t.disconnecting)
+        self.assertEqual(len(proto.received), 1)
+        self.assertEqual(line, proto.received[0])
+
+
+    def test_notQuiteMaximumLineLengthUnfinished(self):
+        """
+        C{LineReceiver} doesn't disconnect the transport it if
+        receives a non-finished line whose length, counting the
+        delimiter, is longer than its C{MAX_LENGTH} but shorter than
+        its C{MAX_LENGTH} + len(delimiter). (When the first part that
+        exceeds the max is the beginning of the delimiter.)
         """
         proto = basic.LineReceiver()
+        # '\r\n' is the default, but we set it just to be explicit in
+        # this test.
+        proto.delimiter = b'\r\n'
         transport = proto_helpers.StringTransport()
         proto.makeConnection(transport)
-        proto.dataReceived(b'x' * (proto.MAX_LENGTH + 1))
-        self.assertTrue(transport.disconnecting)
+        proto.dataReceived((b'x' * proto.MAX_LENGTH)
+                           + proto.delimiter[:len(proto.delimiter)-1])
+        self.assertFalse(transport.disconnecting)
 
 
     def test_rawDataError(self):
@@ -359,10 +391,121 @@ a'''
 
 
 
-class LineOnlyReceiverTestCase(unittest.SynchronousTestCase):
+class ExcessivelyLargeLineCatcher(basic.LineReceiver):
+    """
+    Helper for L{LineReceiverLineLengthExceededTests}.
+
+    @ivar longLines: A L{list} of L{bytes} giving the values
+        C{lineLengthExceeded} has been called with.
+    """
+    def connectionMade(self):
+        self.longLines = []
+
+
+    def lineReceived(self, line):
+        """
+        Disregard any received lines.
+        """
+
+
+    def lineLengthExceeded(self, data):
+        """
+        Record any data that exceeds the line length limits.
+        """
+        self.longLines.append(data)
+
+
+
+class LineReceiverLineLengthExceededTests(unittest.SynchronousTestCase):
+    """
+    Tests for L{twisted.protocols.basic.LineReceiver.lineLengthExceeded}.
+    """
+    def setUp(self):
+        self.proto = ExcessivelyLargeLineCatcher()
+        self.proto.MAX_LENGTH = 6
+        self.transport = proto_helpers.StringTransport()
+        self.proto.makeConnection(self.transport)
+
+
+    def test_longUnendedLine(self):
+        """
+        If more bytes than C{LineReceiver.MAX_LENGTH} arrive containing no line
+        delimiter, all of the bytes are passed as a single string to
+        L{LineReceiver.lineLengthExceeded}.
+        """
+        excessive = b'x' * (self.proto.MAX_LENGTH * 2 + 2)
+        self.proto.dataReceived(excessive)
+        self.assertEqual([excessive], self.proto.longLines)
+
+
+    def test_longLineAfterShortLine(self):
+        """
+        If L{LineReceiver.dataReceived} is called with bytes representing a
+        short line followed by bytes that exceed the length limit without a
+        line delimiter, L{LineReceiver.lineLengthExceeded} is called with all
+        of the bytes following the short line's delimiter.
+        """
+        excessive = b'x' * (self.proto.MAX_LENGTH * 2 + 2)
+        self.proto.dataReceived(b'x' + self.proto.delimiter + excessive)
+        self.assertEqual([excessive], self.proto.longLines)
+
+
+    def test_longLineWithDelimiter(self):
+        """
+        If L{LineReceiver.dataReceived} is called with more than
+        C{LineReceiver.MAX_LENGTH} bytes containing a line delimiter somewhere
+        not in the first C{MAX_LENGTH} bytes, the entire byte string is passed
+        to L{LineReceiver.lineLengthExceeded}.
+        """
+        excessive = self.proto.delimiter.join(
+            [b'x' * (self.proto.MAX_LENGTH * 2 + 2)] * 2)
+        self.proto.dataReceived(excessive)
+        self.assertEqual([excessive], self.proto.longLines)
+
+
+    def test_multipleLongLines(self):
+        """
+        If L{LineReceiver.dataReceived} is called with more than
+        C{LineReceiver.MAX_LENGTH} bytes containing multiple line delimiters
+        somewhere not in the first C{MAX_LENGTH} bytes, the entire byte string
+        is passed to L{LineReceiver.lineLengthExceeded}.
+        """
+        excessive = (
+            b'x' * (self.proto.MAX_LENGTH * 2 + 2) + self.proto.delimiter) * 2
+        self.proto.dataReceived(excessive)
+        self.assertEqual([excessive], self.proto.longLines)
+
+
+    def test_maximumLineLength(self):
+        """
+        C{LineReceiver} disconnects the transport if it receives a line longer
+        than its C{MAX_LENGTH}.
+        """
+        proto = basic.LineReceiver()
+        transport = proto_helpers.StringTransport()
+        proto.makeConnection(transport)
+        proto.dataReceived(b'x' * (proto.MAX_LENGTH + 1) + b'\r\nr')
+        self.assertTrue(transport.disconnecting)
+
+
+    def test_maximumLineLengthRemaining(self):
+        """
+        C{LineReceiver} disconnects the transport it if receives a non-finished
+        line longer than its C{MAX_LENGTH}.
+        """
+        proto = basic.LineReceiver()
+        transport = proto_helpers.StringTransport()
+        proto.makeConnection(transport)
+        proto.dataReceived(b'x' * (proto.MAX_LENGTH + len(proto.delimiter)))
+        self.assertTrue(transport.disconnecting)
+
+
+
+class LineOnlyReceiverTests(unittest.SynchronousTestCase):
     """
     Tests for L{twisted.protocols.basic.LineOnlyReceiver}.
     """
+
     buffer = b"""foo
     bleakness
     desolation
@@ -381,15 +524,17 @@ class LineOnlyReceiverTestCase(unittest.SynchronousTestCase):
         self.assertEqual(a.received, self.buffer.split(b'\n')[:-1])
 
 
-    def test_lineTooLong(self):
+    def test_greaterThanMaximumLineLength(self):
         """
-        Test sending a line too long: it should close the connection.
+        C{LineOnlyReceiver} disconnects the transport if it receives a
+        line longer than its C{MAX_LENGTH} + len(delimiter).
         """
-        t = proto_helpers.StringTransport()
-        a = LineOnlyTester()
-        a.makeConnection(t)
-        res = a.dataReceived(b'x' * 200)
-        self.assertIsInstance(res, error.ConnectionLost)
+        proto = LineOnlyTester()
+        transport = proto_helpers.StringTransport()
+        proto.makeConnection(transport)
+        proto.dataReceived(b'x' * (proto.MAX_LENGTH
+                                   + len(proto.delimiter) + 1) + b'\r\nr')
+        self.assertTrue(transport.disconnecting)
 
 
     def test_lineReceivedNotImplemented(self):
@@ -457,7 +602,7 @@ class LPTestCaseMixin:
 
 
 
-class NetstringReceiverTestCase(unittest.SynchronousTestCase, LPTestCaseMixin):
+class NetstringReceiverTests(unittest.SynchronousTestCase, LPTestCaseMixin):
     """
     Tests for L{twisted.protocols.basic.NetstringReceiver}.
     """
@@ -630,7 +775,7 @@ class NetstringReceiverTestCase(unittest.SynchronousTestCase, LPTestCaseMixin):
         """
         tooLong = self.netstringReceiver.MAX_LENGTH + 1
         self.netstringReceiver.dataReceived(b"".join(
-                (bytes(tooLong), b":", b"a" * tooLong)))
+            (bytes(tooLong), b":", b"a" * tooLong)))
         self.assertTrue(self.transport.disconnecting)
 
 
@@ -688,36 +833,6 @@ class NetstringReceiverTestCase(unittest.SynchronousTestCase, LPTestCaseMixin):
         self.assertRaises(NotImplementedError, proto.stringReceived, 'foo')
 
 
-    def test_deprecatedModuleAttributes(self):
-        """
-        Accessing one of the old module attributes used by the
-        NetstringReceiver parser emits a deprecation warning.
-        """
-        basic.LENGTH, basic.DATA, basic.COMMA, basic.NUMBER
-        warnings = self.flushWarnings(
-            offendingFunctions=[self.test_deprecatedModuleAttributes])
-
-        self.assertEqual(len(warnings), 4)
-        for warning in warnings:
-            self.assertEqual(warning['category'], DeprecationWarning)
-        self.assertEqual(
-            warnings[0]['message'],
-            ("twisted.protocols.basic.LENGTH was deprecated in Twisted 10.2.0: "
-             "NetstringReceiver parser state is private."))
-        self.assertEqual(
-            warnings[1]['message'],
-            ("twisted.protocols.basic.DATA was deprecated in Twisted 10.2.0: "
-             "NetstringReceiver parser state is private."))
-        self.assertEqual(
-            warnings[2]['message'],
-            ("twisted.protocols.basic.COMMA was deprecated in Twisted 10.2.0: "
-             "NetstringReceiver parser state is private."))
-        self.assertEqual(
-            warnings[3]['message'],
-            ("twisted.protocols.basic.NUMBER was deprecated in Twisted 10.2.0: "
-             "NetstringReceiver parser state is private."))
-
-
 
 class IntNTestCaseMixin(LPTestCaseMixin):
     """
@@ -758,7 +873,7 @@ class IntNTestCaseMixin(LPTestCaseMixin):
         r = self.getProtocol()
         r.sendString(b"b" * 16)
         self.assertEqual(r.transport.value(),
-            struct.pack(r.structFormat, 16) + b"b" * 16)
+                         struct.pack(r.structFormat, 16) + b"b" * 16)
 
 
     def test_lengthLimitExceeded(self):
@@ -827,7 +942,7 @@ class RecvdAttributeMixin(object):
         incompleteMessage = (struct.pack(r.structFormat, 5) + (b'b' * 4))
         # Receive a complete message, followed by an incomplete one
         r.dataReceived(completeMessage + incompleteMessage)
-        self.assertEquals(result, [incompleteMessage])
+        self.assertEqual(result, [incompleteMessage])
 
 
     def test_recvdChanged(self):
@@ -849,7 +964,7 @@ class RecvdAttributeMixin(object):
         messageA = self.makeMessage(r, payloadA)
         messageB = self.makeMessage(r, payloadB)
         r.dataReceived(messageA + messageB)
-        self.assertEquals(result, [payloadA, payloadC])
+        self.assertEqual(result, [payloadA, payloadC])
 
 
     def test_switching(self):
@@ -912,7 +1027,8 @@ class TestInt32(TestMixin, basic.Int32StringReceiver):
 
 
 
-class Int32TestCase(unittest.SynchronousTestCase, IntNTestCaseMixin, RecvdAttributeMixin):
+class Int32Tests(unittest.SynchronousTestCase, IntNTestCaseMixin,
+                 RecvdAttributeMixin):
     """
     Test case for int32-prefixed protocol
     """
@@ -942,7 +1058,8 @@ class TestInt16(TestMixin, basic.Int16StringReceiver):
 
 
 
-class Int16TestCase(unittest.SynchronousTestCase, IntNTestCaseMixin, RecvdAttributeMixin):
+class Int16Tests(unittest.SynchronousTestCase, IntNTestCaseMixin,
+                 RecvdAttributeMixin):
     """
     Test case for int16-prefixed protocol
     """
@@ -979,7 +1096,7 @@ class NewStyleTestInt16(TestInt16, object):
 
 
 
-class NewStyleInt16TestCase(Int16TestCase):
+class NewStyleInt16Tests(Int16Tests):
     """
     This test case verifies that IntNStringReceiver still works when inherited
     by a new-style class.
@@ -1000,7 +1117,8 @@ class TestInt8(TestMixin, basic.Int8StringReceiver):
 
 
 
-class Int8TestCase(unittest.SynchronousTestCase, IntNTestCaseMixin, RecvdAttributeMixin):
+class Int8Tests(unittest.SynchronousTestCase, IntNTestCaseMixin,
+                RecvdAttributeMixin):
     """
     Test case for int8-prefixed protocol
     """
@@ -1032,8 +1150,10 @@ class Int8TestCase(unittest.SynchronousTestCase, IntNTestCaseMixin, RecvdAttribu
 
 
 class OnlyProducerTransport(object):
-    # Transport which isn't really a transport, just looks like one to
-    # someone not looking very hard.
+    """
+    Transport which isn't really a transport, just looks like one to
+    someone not looking very hard.
+    """
 
     paused = False
     disconnecting = False
@@ -1056,7 +1176,9 @@ class OnlyProducerTransport(object):
 
 
 class ConsumingProtocol(basic.LineReceiver):
-    # Protocol that really, really doesn't want any more bytes.
+    """
+    Protocol that really, really doesn't want any more bytes.
+    """
 
     def lineReceived(self, line):
         self.transport.write(line)
@@ -1064,57 +1186,83 @@ class ConsumingProtocol(basic.LineReceiver):
 
 
 
-class ProducerTestCase(unittest.SynchronousTestCase):
+class ProducerTests(unittest.SynchronousTestCase):
+    """
+    Tests for L{basic._PausableMixin} and L{basic.LineReceiver.paused}.
+    """
 
-    def testPauseResume(self):
+    def test_pauseResume(self):
+        """
+        When L{basic.LineReceiver} is paused, it doesn't deliver lines to
+        L{basic.LineReceiver.lineReceived} and delivers them immediately upon
+        being resumed.
+
+        L{ConsumingProtocol} is a L{LineReceiver} that pauses itself after
+        every line, and writes that line to its transport.
+        """
         p = ConsumingProtocol()
         t = OnlyProducerTransport()
         p.makeConnection(t)
 
+        # Deliver a partial line.
+        # This doesn't trigger a pause and doesn't deliver a line.
         p.dataReceived(b'hello, ')
-        self.failIf(t.data)
-        self.failIf(t.paused)
-        self.failIf(p.paused)
+        self.assertEqual(t.data, [])
+        self.assertFalse(t.paused)
+        self.assertFalse(p.paused)
 
+        # Deliver the rest of the line.
+        # This triggers the pause, and the line is echoed.
         p.dataReceived(b'world\r\n')
-
         self.assertEqual(t.data, [b'hello, world'])
-        self.failUnless(t.paused)
-        self.failUnless(p.paused)
+        self.assertTrue(t.paused)
+        self.assertTrue(p.paused)
 
+        # Unpausing doesn't deliver more data, and the protocol is unpaused.
         p.resumeProducing()
+        self.assertEqual(t.data, [b'hello, world'])
+        self.assertFalse(t.paused)
+        self.assertFalse(p.paused)
 
-        self.failIf(t.paused)
-        self.failIf(p.paused)
-
+        # Deliver two lines at once.
+        # The protocol is paused after receiving and echoing the first line.
         p.dataReceived(b'hello\r\nworld\r\n')
-
         self.assertEqual(t.data, [b'hello, world', b'hello'])
-        self.failUnless(t.paused)
-        self.failUnless(p.paused)
+        self.assertTrue(t.paused)
+        self.assertTrue(p.paused)
 
+        # Unpausing delivers the waiting line, and causes the protocol to
+        # pause again.
         p.resumeProducing()
-        p.dataReceived(b'goodbye\r\n')
-
         self.assertEqual(t.data, [b'hello, world', b'hello', b'world'])
-        self.failUnless(t.paused)
-        self.failUnless(p.paused)
+        self.assertTrue(t.paused)
+        self.assertTrue(p.paused)
 
+        # Deliver a line while paused.
+        # This doesn't have a visible effect.
+        p.dataReceived(b'goodbye\r\n')
+        self.assertEqual(t.data, [b'hello, world', b'hello', b'world'])
+        self.assertTrue(t.paused)
+        self.assertTrue(p.paused)
+
+        # Unpausing delivers the waiting line, and causes the protocol to
+        # pause again.
         p.resumeProducing()
+        self.assertEqual(
+            t.data, [b'hello, world', b'hello', b'world', b'goodbye'])
+        self.assertTrue(t.paused)
+        self.assertTrue(p.paused)
 
-        self.assertEqual(t.data, [b'hello, world', b'hello', b'world', b'goodbye'])
-        self.failUnless(t.paused)
-        self.failUnless(p.paused)
-
+        # Unpausing doesn't deliver more data, and the protocol is unpaused.
         p.resumeProducing()
+        self.assertEqual(
+            t.data, [b'hello, world', b'hello', b'world', b'goodbye'])
+        self.assertFalse(t.paused)
+        self.assertFalse(p.paused)
 
-        self.assertEqual(t.data, [b'hello, world', b'hello', b'world', b'goodbye'])
-        self.failIf(t.paused)
-        self.failIf(p.paused)
 
 
-
-class FileSenderTestCase(unittest.TestCase):
+class FileSenderTests(unittest.TestCase):
     """
     Tests for L{basic.FileSender}.
     """
@@ -1153,7 +1301,7 @@ class FileSenderTestCase(unittest.TestCase):
         sender.resumeProducing()
         # resumeProducing only finishes after trying to read at eof
         sender.resumeProducing()
-        self.assertEqual(consumer.producer, None)
+        self.assertIsNone(consumer.producer)
 
         self.assertEqual(b"t", self.successResultOf(d))
         self.assertEqual(b"Test content", consumer.value())
@@ -1221,3 +1369,25 @@ class FileSenderTestCase(unittest.TestCase):
         failure.trap(Exception)
         self.assertEqual("Consumer asked us to stop producing",
                          str(failure.value))
+
+
+
+class MiceDeprecationTests(unittest.TestCase):
+    """
+    L{twisted.protocols.mice} is deprecated.
+    """
+    if _PY3:
+        skip = "twisted.protocols.mice is not being ported to Python 3."
+
+
+    def test_MiceDeprecation(self):
+        """
+        L{twisted.protocols.mice} is deprecated since Twisted 16.0.
+        """
+        reflect.namedAny("twisted.protocols.mice")
+        warningsShown = self.flushWarnings()
+        self.assertEqual(1, len(warningsShown))
+        self.assertEqual(
+            "twisted.protocols.mice was deprecated in Twisted 16.0.0: "
+            "There is no replacement for this module.",
+            warningsShown[0]['message'])

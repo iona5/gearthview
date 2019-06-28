@@ -20,14 +20,12 @@ Maintainer: Jonathan Lange
 
 from __future__ import division, absolute_import, print_function
 
-import sys
 from random import randrange
 
-from twisted.python.compat import _PY3
-from twisted.internet import defer, _utilspy3 as utils, interfaces
+from twisted.internet import defer, utils, interfaces
 from twisted.python.failure import Failure
-from twisted.python import deprecate, versions
 from twisted.python.filepath import FilePath
+from twisted.python.lockfile import FilesystemLock
 
 __all__ = [
     'DEFAULT_TIMEOUT_DURATION',
@@ -52,6 +50,7 @@ class DirtyReactorAggregateError(Exception):
     def __init__(self, delayedCalls, selectables=None):
         self.delayedCalls = delayedCalls
         self.selectables = selectables
+
 
     def __str__(self):
         """
@@ -157,11 +156,12 @@ class _Janitor(object):
         reactor = self._getReactor()
         if interfaces.IReactorThreads.providedBy(reactor):
             if reactor.threadpool is not None:
-                # Stop the threadpool now so that a new one is created. 
+                # Stop the threadpool now so that a new one is created.
                 # This improves test isolation somewhat (although this is a
                 # post class cleanup hook, so it's only isolating classes
                 # from each other, not methods from each other).
                 reactor._stopThreadPool()
+
 
     def _cleanReactor(self):
         """
@@ -204,7 +204,7 @@ def excInfoOrFailureToExcInfo(err):
         C{exception_type, exception_object, traceback_object}.
     """
     if isinstance(err, Failure):
-        # Unwrap the Failure into a exc_info tuple.
+        # Unwrap the Failure into an exc_info tuple.
         err = (err.type, err.value, err.getTracebackObject())
     return err
 
@@ -241,50 +241,20 @@ def suppress(action='ignore', **kwarg):
 # #6016:
 def profiled(f, outputFile):
     def _(*args, **kwargs):
-        if sys.version_info[0:2] != (2, 4):
-            import profile
-            prof = profile.Profile()
-            try:
-                result = prof.runcall(f, *args, **kwargs)
-                prof.dump_stats(outputFile)
-            except SystemExit:
-                pass
-            prof.print_stats()
-            return result
-        else: # use hotshot, profile is broken in 2.4
-            import hotshot.stats
-            prof = hotshot.Profile(outputFile)
-            try:
-                return prof.runcall(f, *args, **kwargs)
-            finally:
-                stats = hotshot.stats.load(outputFile)
-                stats.strip_dirs()
-                stats.sort_stats('cum')   # 'time'
-                stats.print_stats(100)
+        import profile
+        prof = profile.Profile()
+        try:
+            result = prof.runcall(f, *args, **kwargs)
+            prof.dump_stats(outputFile)
+        except SystemExit:
+            pass
+        prof.print_stats()
+        return result
     return _
 
 
-def getPythonContainers(meth):
-    """Walk up the Python tree from method 'meth', finding its class, its module
-    and all containing packages."""
-    containers = []
-    containers.append(meth.im_class)
-    moduleName = meth.im_class.__module__
-    while moduleName is not None:
-        module = sys.modules.get(moduleName, None)
-        if module is None:
-            module = __import__(moduleName)
-        containers.append(module)
-        moduleName = getattr(module, '__module__', None)
-    return containers
 
-deprecate.deprecatedModuleAttribute(
-    versions.Version("Twisted", 12, 3, 0),
-    "This function never worked correctly.  Implement lookup on your own.",
-    __name__, "getPythonContainers")
-
-
-
+@defer.inlineCallbacks
 def _runSequentially(callables, stopOnFirstError=False):
     """
     Run the given callables one after the other. If a callable returns a
@@ -302,16 +272,14 @@ def _runSequentially(callables, stopOnFirstError=False):
     results = []
     for f in callables:
         d = defer.maybeDeferred(f)
-        thing = defer.waitForDeferred(d)
-        yield thing
         try:
-            results.append((defer.SUCCESS, thing.getResult()))
-        except:
+            thing = yield d
+            results.append((defer.SUCCESS, thing))
+        except Exception:
             results.append((defer.FAILURE, Failure()))
             if stopOnFirstError:
                 break
-    yield results
-_runSequentially = defer.deferredGenerator(_runSequentially)
+    defer.returnValue(results)
 
 
 
@@ -364,8 +332,8 @@ def _unusedTestDirectory(base):
     """
     Find an unused directory named similarly to C{base}.
 
-    Once a directory is found, it will be locked and a marker dropped into it to
-    identify it as a trial temporary directory.
+    Once a directory is found, it will be locked and a marker dropped into it
+    to identify it as a trial temporary directory.
 
     @param base: A template path for the discovery process.  If this path
         exactly cannot be used, a path which varies only in a suffix of the
@@ -375,11 +343,10 @@ def _unusedTestDirectory(base):
     @return: A two-tuple.  The first element is a L{FilePath} representing the
         directory which was found and created.  The second element is a locked
         L{FilesystemLock<twisted.python.lockfile.FilesystemLock>}.  Another
-        call to C{_unusedTestDirectory} will not be able to reused the the
+        call to C{_unusedTestDirectory} will not be able to reused the
         same name until the lock is released, either explicitly or by this
         process exiting.
     """
-    from twisted.python.lockfile import FilesystemLock
     counter = 0
     while True:
         if counter:
@@ -394,10 +361,10 @@ def _unusedTestDirectory(base):
                 # It exists though - delete it
                 _removeSafely(testdir)
 
-            # Create it anew and mark it as ours so the next _removeSafely on it
-            # succeeds.
+            # Create it anew and mark it as ours so the next _removeSafely on
+            # it succeeds.
             testdir.makedirs()
-            testdir.child('_trial_marker').setContent('')
+            testdir.child(b'_trial_marker').setContent(b'')
             return testdir, testDirLock
         else:
             # It is in use
@@ -406,6 +373,39 @@ def _unusedTestDirectory(base):
             else:
                 raise _WorkingDirectoryBusy()
 
-# Remove this, and move lockfile import, after ticket #5960 is resolved:
-if _PY3:
-    del _unusedTestDirectory
+
+
+def _listToPhrase(things, finalDelimiter, delimiter=', '):
+    """
+    Produce a string containing each thing in C{things},
+    separated by a C{delimiter}, with the last couple being separated
+    by C{finalDelimiter}
+
+    @param things: The elements of the resulting phrase
+    @type things: L{list} or L{tuple}
+
+    @param finalDelimiter: What to put between the last two things
+        (typically 'and' or 'or')
+    @type finalDelimiter: L{str}
+
+    @param delimiter: The separator to use between each thing,
+        not including the last two. Should typically include a trailing space.
+    @type delimiter: L{str}
+
+    @return: The resulting phrase
+    @rtype: L{str}
+    """
+    if not isinstance(things, (list, tuple)):
+        raise TypeError("Things must be a list or a tuple")
+    if not things:
+        return ''
+    if len(things) == 1:
+        return str(things[0])
+    if len(things) == 2:
+        return "%s %s %s" % (str(things[0]), finalDelimiter, str(things[1]))
+    else:
+        strThings = []
+        for thing in things:
+            strThings.append(str(thing))
+        return "%s%s%s %s" % (delimiter.join(strThings[:-1]),
+            delimiter, finalDelimiter, strThings[-1])

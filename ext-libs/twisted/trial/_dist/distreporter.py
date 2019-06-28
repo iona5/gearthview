@@ -11,18 +11,17 @@ test is over.
 @since: 12.3
 """
 
-from zope.interface import implements
+from zope.interface import implementer
 from twisted.trial.itrial import IReporter
 from twisted.python.components import proxyForInterface
 
 
 
+@implementer(IReporter)
 class DistReporter(proxyForInterface(IReporter)):
     """
     See module docstring.
     """
-
-    implements(IReporter)
 
     def __init__(self, original):
         super(DistReporter, self).__init__(original)
@@ -61,7 +60,7 @@ class DistReporter(proxyForInterface(IReporter)):
                                         test, reason))
 
 
-    def addUnexpectedSuccess(self, test, todo):
+    def addUnexpectedSuccess(self, test, todo=None):
         """
         Queue adding an unexpected success.
         """
@@ -69,7 +68,7 @@ class DistReporter(proxyForInterface(IReporter)):
                                         test, todo))
 
 
-    def addExpectedFailure(self, test, error, todo):
+    def addExpectedFailure(self, test, error, todo=None):
         """
         Queue adding an unexpected failure.
         """
@@ -90,5 +89,5 @@ class DistReporter(proxyForInterface(IReporter)):
         """
         self.running[test.id()].append((self.original.stopTest, test))
         for step in self.running[test.id()]:
-            apply(step[0], step[1:])
+            step[0](*step[1:])
         del self.running[test.id()]

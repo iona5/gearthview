@@ -5,6 +5,8 @@
 Tests for L{twisted.conch.checkers}.
 """
 
+from __future__ import absolute_import, division
+
 try:
     import crypt
 except ImportError:
@@ -12,10 +14,17 @@ except ImportError:
 else:
     cryptSkip = None
 
-import os, base64
+import os
+
+from collections import namedtuple
+from io import BytesIO
+
+from zope.interface.verify import verifyObject
 
 from twisted.python import util
+from twisted.python.compat import _b64encodebytes
 from twisted.python.failure import Failure
+from twisted.python.reflect import requireModule
 from twisted.trial.unittest import TestCase
 from twisted.python.filepath import FilePath
 from twisted.cred.checkers import InMemoryUsernamePasswordDatabaseDontUse
@@ -25,17 +34,15 @@ from twisted.cred.error import UnhandledCredentials, UnauthorizedLogin
 from twisted.python.fakepwd import UserDatabase, ShadowDatabase
 from twisted.test.test_process import MockOS
 
-try:
-    import Crypto.Cipher.DES3
-    import pyasn1
-except ImportError:
-    dependencySkip = "can't run without Crypto and PyASN1"
-else:
+
+if requireModule('cryptography') and requireModule('pyasn1'):
     dependencySkip = None
     from twisted.conch.ssh import keys
     from twisted.conch import checkers
     from twisted.conch.error import NotEnoughAuthentication, ValidPublicKey
     from twisted.conch.test import keydata
+else:
+    dependencySkip = "can't run without cryptography and PyASN1"
 
 if getattr(os, 'geteuid', None) is None:
     euidSkip = "Cannot run without effective UIDs (questionable)"
@@ -105,16 +112,16 @@ class HelperTests(TestCase):
         userdb.addUser(
             'alice', 'secrit', 1, 2, 'first last', '/foo', '/bin/sh')
         self.patch(checkers, 'pwd', userdb)
-        self.assertEquals(
+        self.assertEqual(
             checkers._pwdGetByName('alice'), userdb.getpwnam('alice'))
 
 
     def test_pwdGetByNameWithoutPwd(self):
         """
-        If the C{pwd} module isn't present, L{_pwdGetByName} returns C{None}.
+        If the C{pwd} module isn't present, L{_pwdGetByName} returns L{None}.
         """
         self.patch(checkers, 'pwd', None)
-        self.assertIdentical(checkers._pwdGetByName('alice'), None)
+        self.assertIsNone(checkers._pwdGetByName('alice'))
 
 
     def test_shadowGetByName(self):
@@ -128,53 +135,27 @@ class HelperTests(TestCase):
 
         self.mockos.euid = 2345
         self.mockos.egid = 1234
-        self.patch(checkers, 'os', self.mockos)
         self.patch(util, 'os', self.mockos)
 
-        self.assertEquals(
+        self.assertEqual(
             checkers._shadowGetByName('bob'), userdb.getspnam('bob'))
-        self.assertEquals(self.mockos.seteuidCalls, [0, 2345])
-        self.assertEquals(self.mockos.setegidCalls, [0, 1234])
+        self.assertEqual(self.mockos.seteuidCalls, [0, 2345])
+        self.assertEqual(self.mockos.setegidCalls, [0, 1234])
 
 
     def test_shadowGetByNameWithoutSpwd(self):
         """
-        L{_shadowGetByName} uses the C{shadow} module to return a tuple of items
-        from the UNIX /etc/shadow database if the C{spwd} module is not present
-        and the C{shadow} module is.
-        """
-        userdb = ShadowDatabase()
-        userdb.addUser('bob', 'passphrase', 1, 2, 3, 4, 5, 6, 7)
-        self.patch(checkers, 'spwd', None)
-        self.patch(checkers, 'shadow', userdb)
-        self.patch(checkers, 'os', self.mockos)
-        self.patch(util, 'os', self.mockos)
-
-        self.mockos.euid = 2345
-        self.mockos.egid = 1234
-
-        self.assertEquals(
-            checkers._shadowGetByName('bob'), userdb.getspnam('bob'))
-        self.assertEquals(self.mockos.seteuidCalls, [0, 2345])
-        self.assertEquals(self.mockos.setegidCalls, [0, 1234])
-
-
-    def test_shadowGetByNameWithoutEither(self):
-        """
-        L{_shadowGetByName} returns C{None} if neither C{spwd} nor C{shadow} is
-        present.
+        L{_shadowGetByName} returns L{None} if C{spwd} is not present.
         """
         self.patch(checkers, 'spwd', None)
-        self.patch(checkers, 'shadow', None)
-        self.patch(checkers, 'os', self.mockos)
 
-        self.assertIdentical(checkers._shadowGetByName('bob'), None)
-        self.assertEquals(self.mockos.seteuidCalls, [])
-        self.assertEquals(self.mockos.setegidCalls, [])
+        self.assertIsNone(checkers._shadowGetByName('bob'))
+        self.assertEqual(self.mockos.seteuidCalls, [])
+        self.assertEqual(self.mockos.setegidCalls, [])
 
 
 
-class SSHPublicKeyDatabaseTestCase(TestCase):
+class SSHPublicKeyDatabaseTests(TestCase):
     """
     Tests for L{SSHPublicKeyDatabase}.
     """
@@ -182,33 +163,50 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
 
     def setUp(self):
         self.checker = checkers.SSHPublicKeyDatabase()
-        self.key1 = base64.encodestring("foobar")
-        self.key2 = base64.encodestring("eggspam")
-        self.content = "t1 %s foo\nt2 %s egg\n" % (self.key1, self.key2)
+        self.key1 = _b64encodebytes(b"foobar")
+        self.key2 = _b64encodebytes(b"eggspam")
+        self.content = (b"t1 " + self.key1 + b" foo\nt2 " + self.key2 +
+                        b" egg\n")
 
         self.mockos = MockOS()
         self.mockos.path = FilePath(self.mktemp())
         self.mockos.path.makedirs()
-        self.patch(checkers, 'os', self.mockos)
         self.patch(util, 'os', self.mockos)
         self.sshDir = self.mockos.path.child('.ssh')
         self.sshDir.makedirs()
 
         userdb = UserDatabase()
         userdb.addUser(
-            'user', 'password', 1, 2, 'first last',
-            self.mockos.path.path, '/bin/shell')
+            b'user', b'password', 1, 2, b'first last',
+            self.mockos.path.path, b'/bin/shell')
         self.checker._userdb = userdb
+
+
+    def test_deprecated(self):
+        """
+        L{SSHPublicKeyDatabase} is deprecated as of version 15.0
+        """
+        warningsShown = self.flushWarnings(
+            offendingFunctions=[self.setUp])
+        self.assertEqual(warningsShown[0]['category'], DeprecationWarning)
+        self.assertEqual(
+            warningsShown[0]['message'],
+            "twisted.conch.checkers.SSHPublicKeyDatabase "
+            "was deprecated in Twisted 15.0.0: Please use "
+            "twisted.conch.checkers.SSHPublicKeyChecker, "
+            "initialized with an instance of "
+            "twisted.conch.checkers.UNIXAuthorizedKeysFiles instead.")
+        self.assertEqual(len(warningsShown), 1)
 
 
     def _testCheckKey(self, filename):
         self.sshDir.child(filename).setContent(self.content)
-        user = UsernamePassword("user", "password")
-        user.blob = "foobar"
+        user = UsernamePassword(b"user", b"password")
+        user.blob = b"foobar"
         self.assertTrue(self.checker.checkKey(user))
-        user.blob = "eggspam"
+        user.blob = b"eggspam"
         self.assertTrue(self.checker.checkKey(user))
-        user.blob = "notallowed"
+        user.blob = b"notallowed"
         self.assertFalse(self.checker.checkKey(user))
 
 
@@ -240,20 +238,19 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
         keyFile = self.sshDir.child("authorized_keys")
         keyFile.setContent(self.content)
         # Fake permission error by changing the mode
-        keyFile.chmod(0000)
-        self.addCleanup(keyFile.chmod, 0777)
+        keyFile.chmod(0o000)
+        self.addCleanup(keyFile.chmod, 0o777)
         # And restore the right mode when seteuid is called
         savedSeteuid = self.mockos.seteuid
         def seteuid(euid):
-            keyFile.chmod(0777)
+            keyFile.chmod(0o777)
             return savedSeteuid(euid)
         self.mockos.euid = 2345
         self.mockos.egid = 1234
         self.patch(self.mockos, "seteuid", seteuid)
-        self.patch(checkers, 'os', self.mockos)
         self.patch(util, 'os', self.mockos)
-        user = UsernamePassword("user", "password")
-        user.blob = "foobar"
+        user = UsernamePassword(b"user", b"password")
+        user.blob = b"foobar"
         self.assertTrue(self.checker.checkKey(user))
         self.assertEqual(self.mockos.seteuidCalls, [0, 1, 0, 2345])
         self.assertEqual(self.mockos.setegidCalls, [2, 1234])
@@ -268,11 +265,11 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
             return True
         self.patch(self.checker, 'checkKey', _checkKey)
         credentials = SSHPrivateKey(
-            'test', 'ssh-rsa', keydata.publicRSA_openssh, 'foo',
-            keys.Key.fromString(keydata.privateRSA_openssh).sign('foo'))
+            b'test', b'ssh-rsa', keydata.publicRSA_openssh, b'foo',
+            keys.Key.fromString(keydata.privateRSA_openssh).sign(b'foo'))
         d = self.checker.requestAvatarId(credentials)
         def _verify(avatarId):
-            self.assertEqual(avatarId, 'test')
+            self.assertEqual(avatarId, b'test')
         return d.addCallback(_verify)
 
 
@@ -287,7 +284,7 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
             return True
         self.patch(self.checker, 'checkKey', _checkKey)
         credentials = SSHPrivateKey(
-            'test', 'ssh-rsa', keydata.publicRSA_openssh, None, None)
+            b'test', b'ssh-rsa', keydata.publicRSA_openssh, None, None)
         d = self.checker.requestAvatarId(credentials)
         return self.assertFailure(d, ValidPublicKey)
 
@@ -314,8 +311,8 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
             return True
         self.patch(self.checker, 'checkKey', _checkKey)
         credentials = SSHPrivateKey(
-            'test', 'ssh-rsa', keydata.publicRSA_openssh, 'foo',
-            keys.Key.fromString(keydata.privateDSA_openssh).sign('foo'))
+            b'test', b'ssh-rsa', keydata.publicRSA_openssh, b'foo',
+            keys.Key.fromString(keydata.privateDSA_openssh).sign(b'foo'))
         d = self.checker.requestAvatarId(credentials)
         return self.assertFailure(d, UnauthorizedLogin)
 
@@ -328,7 +325,7 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
         def _checkKey(ignored):
             return True
         self.patch(self.checker, 'checkKey', _checkKey)
-        credentials = SSHPrivateKey('test', None, 'blob', 'sigData', 'sig')
+        credentials = SSHPrivateKey(b'test', None, b'blob', b'sigData', b'sig')
         d = self.checker.requestAvatarId(credentials)
         def _verifyLoggedException(failure):
             errors = self.flushLoggedErrors(keys.BadKeyError)
@@ -339,7 +336,7 @@ class SSHPublicKeyDatabaseTestCase(TestCase):
 
 
 
-class SSHProtocolCheckerTestCase(TestCase):
+class SSHProtocolCheckerTests(TestCase):
     """
     Tests for L{SSHProtocolChecker}.
     """
@@ -361,7 +358,7 @@ class SSHProtocolCheckerTestCase(TestCase):
 
     def test_registerCheckerWithInterface(self):
         """
-        If a apecific interface is passed into
+        If a specific interface is passed into
         L{SSHProtocolChecker.registerChecker}, that interface should be
         registered instead of what the checker specifies in
         credentialIntefaces.
@@ -382,11 +379,11 @@ class SSHProtocolCheckerTestCase(TestCase):
         """
         checker = checkers.SSHProtocolChecker()
         passwordDatabase = InMemoryUsernamePasswordDatabaseDontUse()
-        passwordDatabase.addUser('test', 'test')
+        passwordDatabase.addUser(b'test', b'test')
         checker.registerChecker(passwordDatabase)
-        d = checker.requestAvatarId(UsernamePassword('test', 'test'))
+        d = checker.requestAvatarId(UsernamePassword(b'test', b'test'))
         def _callback(avatarId):
-            self.assertEqual(avatarId, 'test')
+            self.assertEqual(avatarId, b'test')
         return d.addCallback(_callback)
 
 
@@ -402,9 +399,9 @@ class SSHProtocolCheckerTestCase(TestCase):
         self.patch(checker, 'areDone', _areDone)
 
         passwordDatabase = InMemoryUsernamePasswordDatabaseDontUse()
-        passwordDatabase.addUser('test', 'test')
+        passwordDatabase.addUser(b'test', b'test')
         checker.registerChecker(passwordDatabase)
-        d = checker.requestAvatarId(UsernamePassword('test', 'test'))
+        d = checker.requestAvatarId(UsernamePassword(b'test', b'test'))
         return self.assertFailure(d, NotEnoughAuthentication)
 
 
@@ -414,7 +411,7 @@ class SSHProtocolCheckerTestCase(TestCase):
         L{SSHProtocolChecker} should raise L{UnhandledCredentials}.
         """
         checker = checkers.SSHProtocolChecker()
-        d = checker.requestAvatarId(UsernamePassword('test', 'test'))
+        d = checker.requestAvatarId(UsernamePassword(b'test', b'test'))
         return self.assertFailure(d, UnhandledCredentials)
 
 
@@ -422,7 +419,7 @@ class SSHProtocolCheckerTestCase(TestCase):
         """
         The default L{SSHProcotolChecker.areDone} should simply return True.
         """
-        self.assertEquals(checkers.SSHProtocolChecker().areDone(None), True)
+        self.assertTrue(checkers.SSHProtocolChecker().areDone(None))
 
 
 
@@ -446,10 +443,10 @@ class UNIXPasswordDatabaseTests(TestCase):
         """
         result = []
         d.addBoth(result.append)
-        self.assertEquals(len(result), 1, "login incomplete")
+        self.assertEqual(len(result), 1, "login incomplete")
         if isinstance(result[0], Failure):
             result[0].raiseException()
-        self.assertEquals(result[0], username)
+        self.assertEqual(result[0], username)
 
 
     def test_defaultCheckers(self):
@@ -478,20 +475,19 @@ class UNIXPasswordDatabaseTests(TestCase):
         self.patch(checkers, 'spwd', spwd)
 
         mockos = MockOS()
-        self.patch(checkers, 'os', mockos)
         self.patch(util, 'os', mockos)
 
         mockos.euid = 2345
         mockos.egid = 1234
 
-        cred = UsernamePassword("alice", "password")
-        self.assertLoggedIn(checker.requestAvatarId(cred), 'alice')
-        self.assertEquals(mockos.seteuidCalls, [])
-        self.assertEquals(mockos.setegidCalls, [])
-        cred.username = "bob"
-        self.assertLoggedIn(checker.requestAvatarId(cred), 'bob')
-        self.assertEquals(mockos.seteuidCalls, [0, 2345])
-        self.assertEquals(mockos.setegidCalls, [0, 1234])
+        cred = UsernamePassword(b"alice", b"password")
+        self.assertLoggedIn(checker.requestAvatarId(cred), b'alice')
+        self.assertEqual(mockos.seteuidCalls, [])
+        self.assertEqual(mockos.setegidCalls, [])
+        cred.username = b"bob"
+        self.assertLoggedIn(checker.requestAvatarId(cred), b'bob')
+        self.assertEqual(mockos.seteuidCalls, [0, 2345])
+        self.assertEqual(mockos.setegidCalls, [0, 1234])
 
 
     def assertUnauthorizedLogin(self, d):
@@ -521,8 +517,8 @@ class UNIXPasswordDatabaseTests(TestCase):
         userdb.addUser('anybody', password, 1, 2, 'foo', '/bar', '/bin/sh')
         checker = checkers.UNIXPasswordDatabase([userdb.getpwnam])
         self.assertLoggedIn(
-            checker.requestAvatarId(UsernamePassword('anybody', 'secret')),
-            'anybody')
+            checker.requestAvatarId(UsernamePassword(b'anybody', b'secret')),
+            b'anybody')
 
 
     def test_verifyPassword(self):
@@ -537,8 +533,8 @@ class UNIXPasswordDatabaseTests(TestCase):
             return [username, username]
         self.patch(checkers, 'verifyCryptedPassword', verifyCryptedPassword)
         checker = checkers.UNIXPasswordDatabase([getpwnam])
-        credential = UsernamePassword('username', 'username')
-        self.assertLoggedIn(checker.requestAvatarId(credential), 'username')
+        credential = UsernamePassword(b'username', b'username')
+        self.assertLoggedIn(checker.requestAvatarId(credential), b'username')
 
 
     def test_failOnKeyError(self):
@@ -549,7 +545,7 @@ class UNIXPasswordDatabaseTests(TestCase):
         def getpwnam(username):
             raise KeyError(username)
         checker = checkers.UNIXPasswordDatabase([getpwnam])
-        credential = UsernamePassword('username', 'username')
+        credential = UsernamePassword(b'username', b'username')
         self.assertUnauthorizedLogin(checker.requestAvatarId(credential))
 
 
@@ -564,7 +560,7 @@ class UNIXPasswordDatabaseTests(TestCase):
             return [username, username]
         self.patch(checkers, 'verifyCryptedPassword', verifyCryptedPassword)
         checker = checkers.UNIXPasswordDatabase([getpwnam])
-        credential = UsernamePassword('username', 'username')
+        credential = UsernamePassword(b'username', b'username')
         self.assertUnauthorizedLogin(checker.requestAvatarId(credential))
 
 
@@ -583,8 +579,8 @@ class UNIXPasswordDatabaseTests(TestCase):
             return [username, username]
         self.patch(checkers, 'verifyCryptedPassword', verifyCryptedPassword)
         checker = checkers.UNIXPasswordDatabase([getpwnam1, getpwnam2])
-        credential = UsernamePassword('username', 'username')
-        self.assertLoggedIn(checker.requestAvatarId(credential), 'username')
+        credential = UsernamePassword(b'username', b'username')
+        self.assertLoggedIn(checker.requestAvatarId(credential), b'username')
 
 
     def test_failOnSpecial(self):
@@ -599,11 +595,281 @@ class UNIXPasswordDatabaseTests(TestCase):
         self.patch(checkers, 'pwd', pwd)
 
         checker = checkers.UNIXPasswordDatabase([checkers._pwdGetByName])
-        cred = UsernamePassword('alice', '')
+        cred = UsernamePassword(b'alice', b'')
         self.assertUnauthorizedLogin(checker.requestAvatarId(cred))
 
-        cred = UsernamePassword('bob', 'x')
+        cred = UsernamePassword(b'bob', b'x')
         self.assertUnauthorizedLogin(checker.requestAvatarId(cred))
 
-        cred = UsernamePassword('carol', '*')
+        cred = UsernamePassword(b'carol', b'*')
         self.assertUnauthorizedLogin(checker.requestAvatarId(cred))
+
+
+
+class AuthorizedKeyFileReaderTests(TestCase):
+    """
+    Tests for L{checkers.readAuthorizedKeyFile}
+    """
+    skip = dependencySkip
+
+
+    def test_ignoresComments(self):
+        """
+        L{checkers.readAuthorizedKeyFile} does not attempt to turn comments
+        into keys
+        """
+        fileobj = BytesIO(b'# this comment is ignored\n'
+                          b'this is not\n'
+                          b'# this is again\n'
+                          b'and this is not')
+        result = checkers.readAuthorizedKeyFile(fileobj, lambda x: x)
+        self.assertEqual([b'this is not', b'and this is not'], list(result))
+
+
+    def test_ignoresLeadingWhitespaceAndEmptyLines(self):
+        """
+        L{checkers.readAuthorizedKeyFile} ignores leading whitespace in
+        lines, as well as empty lines
+        """
+        fileobj = BytesIO(b"""
+                           # ignore
+                           not ignored
+                           """)
+        result = checkers.readAuthorizedKeyFile(fileobj, parseKey=lambda x: x)
+        self.assertEqual([b'not ignored'], list(result))
+
+
+    def test_ignoresUnparsableKeys(self):
+        """
+        L{checkers.readAuthorizedKeyFile} does not raise an exception
+        when a key fails to parse (raises a
+        L{twisted.conch.ssh.keys.BadKeyError}), but rather just keeps going
+        """
+        def failOnSome(line):
+            if line.startswith(b'f'):
+                raise keys.BadKeyError('failed to parse')
+            return line
+
+        fileobj = BytesIO(b'failed key\ngood key')
+        result = checkers.readAuthorizedKeyFile(fileobj,
+                                                parseKey=failOnSome)
+        self.assertEqual([b'good key'], list(result))
+
+
+
+class InMemorySSHKeyDBTests(TestCase):
+    """
+    Tests for L{checkers.InMemorySSHKeyDB}
+    """
+    skip = dependencySkip
+
+
+    def test_implementsInterface(self):
+        """
+        L{checkers.InMemorySSHKeyDB} implements
+        L{checkers.IAuthorizedKeysDB}
+        """
+        keydb = checkers.InMemorySSHKeyDB({b'alice': [b'key']})
+        verifyObject(checkers.IAuthorizedKeysDB, keydb)
+
+
+    def test_noKeysForUnauthorizedUser(self):
+        """
+        If the user is not in the mapping provided to
+        L{checkers.InMemorySSHKeyDB}, an empty iterator is returned
+        by L{checkers.InMemorySSHKeyDB.getAuthorizedKeys}
+        """
+        keydb = checkers.InMemorySSHKeyDB({b'alice': [b'keys']})
+        self.assertEqual([], list(keydb.getAuthorizedKeys(b'bob')))
+
+
+    def test_allKeysForAuthorizedUser(self):
+        """
+        If the user is in the mapping provided to
+        L{checkers.InMemorySSHKeyDB}, an iterator with all the keys
+        is returned by L{checkers.InMemorySSHKeyDB.getAuthorizedKeys}
+        """
+        keydb = checkers.InMemorySSHKeyDB({b'alice': [b'a', b'b']})
+        self.assertEqual([b'a', b'b'], list(keydb.getAuthorizedKeys(b'alice')))
+
+
+
+class UNIXAuthorizedKeysFilesTests(TestCase):
+    """
+    Tests for L{checkers.UNIXAuthorizedKeysFiles}.
+    """
+    skip = dependencySkip
+
+
+    def setUp(self):
+        mockos = MockOS()
+        mockos.path = FilePath(self.mktemp())
+        mockos.path.makedirs()
+
+        self.userdb = UserDatabase()
+        self.userdb.addUser(b'alice', b'password', 1, 2, b'alice lastname',
+                            mockos.path.path, b'/bin/shell')
+
+        self.sshDir = mockos.path.child('.ssh')
+        self.sshDir.makedirs()
+        authorizedKeys = self.sshDir.child('authorized_keys')
+        authorizedKeys.setContent(b'key 1\nkey 2')
+
+        self.expectedKeys = [b'key 1', b'key 2']
+
+
+    def test_implementsInterface(self):
+        """
+        L{checkers.UNIXAuthorizedKeysFiles} implements
+        L{checkers.IAuthorizedKeysDB}.
+        """
+        keydb = checkers.UNIXAuthorizedKeysFiles(self.userdb)
+        verifyObject(checkers.IAuthorizedKeysDB, keydb)
+
+
+    def test_noKeysForUnauthorizedUser(self):
+        """
+        If the user is not in the user database provided to
+        L{checkers.UNIXAuthorizedKeysFiles}, an empty iterator is returned
+        by L{checkers.UNIXAuthorizedKeysFiles.getAuthorizedKeys}.
+        """
+        keydb = checkers.UNIXAuthorizedKeysFiles(self.userdb,
+                                                 parseKey=lambda x: x)
+        self.assertEqual([], list(keydb.getAuthorizedKeys('bob')))
+
+
+    def test_allKeysInAllAuthorizedFilesForAuthorizedUser(self):
+        """
+        If the user is in the user database provided to
+        L{checkers.UNIXAuthorizedKeysFiles}, an iterator with all the keys in
+        C{~/.ssh/authorized_keys} and C{~/.ssh/authorized_keys2} is returned
+        by L{checkers.UNIXAuthorizedKeysFiles.getAuthorizedKeys}.
+        """
+        self.sshDir.child('authorized_keys2').setContent(b'key 3')
+        keydb = checkers.UNIXAuthorizedKeysFiles(self.userdb,
+                                                 parseKey=lambda x: x)
+        self.assertEqual(self.expectedKeys + [b'key 3'],
+                         list(keydb.getAuthorizedKeys(b'alice')))
+
+
+    def test_ignoresNonexistantFile(self):
+        """
+        L{checkers.UNIXAuthorizedKeysFiles.getAuthorizedKeys} returns only
+        the keys in C{~/.ssh/authorized_keys} and C{~/.ssh/authorized_keys2}
+        if they exist.
+        """
+        keydb = checkers.UNIXAuthorizedKeysFiles(self.userdb,
+                                                 parseKey=lambda x: x)
+        self.assertEqual(self.expectedKeys,
+                         list(keydb.getAuthorizedKeys(b'alice')))
+
+
+    def test_ignoresUnreadableFile(self):
+        """
+        L{checkers.UNIXAuthorizedKeysFiles.getAuthorizedKeys} returns only
+        the keys in C{~/.ssh/authorized_keys} and C{~/.ssh/authorized_keys2}
+        if they are readable.
+        """
+        self.sshDir.child('authorized_keys2').makedirs()
+        keydb = checkers.UNIXAuthorizedKeysFiles(self.userdb,
+                                                 parseKey=lambda x: x)
+        self.assertEqual(self.expectedKeys,
+                         list(keydb.getAuthorizedKeys(b'alice')))
+
+
+
+_KeyDB = namedtuple('KeyDB', ['getAuthorizedKeys'])
+
+
+
+class _DummyException(Exception):
+    """
+    Fake exception to be used for testing.
+    """
+    pass
+
+
+
+class SSHPublicKeyCheckerTests(TestCase):
+    """
+    Tests for L{checkers.SSHPublicKeyChecker}.
+    """
+    skip = dependencySkip
+
+
+    def setUp(self):
+        self.credentials = SSHPrivateKey(
+             b'alice', b'ssh-rsa', keydata.publicRSA_openssh, b'foo',
+             keys.Key.fromString(keydata.privateRSA_openssh).sign(b'foo'))
+        self.keydb = _KeyDB(lambda _: [
+            keys.Key.fromString(keydata.publicRSA_openssh)])
+        self.checker = checkers.SSHPublicKeyChecker(self.keydb)
+
+
+    def test_credentialsWithoutSignature(self):
+        """
+        Calling L{checkers.SSHPublicKeyChecker.requestAvatarId} with
+        credentials that do not have a signature fails with L{ValidPublicKey}.
+        """
+        self.credentials.signature = None
+        self.failureResultOf(self.checker.requestAvatarId(self.credentials),
+                             ValidPublicKey)
+
+
+    def test_credentialsWithBadKey(self):
+        """
+        Calling L{checkers.SSHPublicKeyChecker.requestAvatarId} with
+        credentials that have a bad key fails with L{keys.BadKeyError}.
+        """
+        self.credentials.blob = b''
+        self.failureResultOf(self.checker.requestAvatarId(self.credentials),
+                             keys.BadKeyError)
+
+
+    def test_credentialsNoMatchingKey(self):
+        """
+        If L{checkers.IAuthorizedKeysDB.getAuthorizedKeys} returns no keys
+        that match the credentials,
+        L{checkers.SSHPublicKeyChecker.requestAvatarId} fails with
+        L{UnauthorizedLogin}.
+        """
+        self.credentials.blob = keydata.publicDSA_openssh
+        self.failureResultOf(self.checker.requestAvatarId(self.credentials),
+                             UnauthorizedLogin)
+
+
+    def test_credentialsInvalidSignature(self):
+        """
+        Calling L{checkers.SSHPublicKeyChecker.requestAvatarId} with
+        credentials that are incorrectly signed fails with
+        L{UnauthorizedLogin}.
+        """
+        self.credentials.signature = (
+            keys.Key.fromString(keydata.privateDSA_openssh).sign(b'foo'))
+        self.failureResultOf(self.checker.requestAvatarId(self.credentials),
+                             UnauthorizedLogin)
+
+
+    def test_failureVerifyingKey(self):
+        """
+        If L{keys.Key.verify} raises an exception,
+        L{checkers.SSHPublicKeyChecker.requestAvatarId} fails with
+        L{UnauthorizedLogin}.
+        """
+        def fail(*args, **kwargs):
+            raise _DummyException()
+
+        self.patch(keys.Key, 'verify', fail)
+
+        self.failureResultOf(self.checker.requestAvatarId(self.credentials),
+                             UnauthorizedLogin)
+        self.flushLoggedErrors(_DummyException)
+
+
+    def test_usernameReturnedOnSuccess(self):
+        """
+        L{checker.SSHPublicKeyChecker.requestAvatarId}, if successful,
+        callbacks with the username.
+        """
+        d = self.checker.requestAvatarId(self.credentials)
+        self.assertEqual(b'alice', self.successResultOf(d))

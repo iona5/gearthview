@@ -27,7 +27,7 @@ except ImportError:
 
 try:
     socket(AF_INET6, SOCK_STREAM).close()
-except error, e:
+except error as e:
     ipv6Skip = str(e)
 else:
     ipv6Skip = None
@@ -54,16 +54,16 @@ class SupportTests(unittest.TestCase):
         client.setblocking(False)
         try:
             client.connect((localhost, port.getsockname()[1]))
-        except error, (errnum, message):
-            self.assertIn(errnum, (errno.EINPROGRESS, errno.EWOULDBLOCK))
+        except error as e:
+            self.assertIn(e.errno, (errno.EINPROGRESS, errno.EWOULDBLOCK))
 
         server = socket(family, SOCK_STREAM)
         self.addCleanup(server.close)
-        buff = array('c', '\0' * 256)
+        buff = array('B', b'\0' * 256)
         self.assertEqual(
             0, _iocp.accept(port.fileno(), server.fileno(), buff, None))
         server.setsockopt(
-            SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, pack('P', server.fileno()))
+            SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, pack('P', port.fileno()))
         self.assertEqual(
             (family, client.getpeername()[:2], client.getsockname()[:2]),
             _iocp.get_accept_addrs(server.fileno(), buff))
@@ -100,7 +100,7 @@ class SupportTests(unittest.TestCase):
 
 
 
-class IOCPReactorTestCase(unittest.TestCase):
+class IOCPReactorTests(unittest.TestCase):
     def test_noPendingTimerEvents(self):
         """
         Test reactor behavior (doIteration) when there are no pending time
@@ -108,7 +108,7 @@ class IOCPReactorTestCase(unittest.TestCase):
         """
         ir = IOCPReactor()
         ir.wakeUp()
-        self.failIf(ir.doIteration(None))
+        self.assertFalse(ir.doIteration(None))
 
 
     def test_reactorInterfaces(self):

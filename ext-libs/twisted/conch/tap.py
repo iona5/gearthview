@@ -9,21 +9,16 @@ Support module for making SSH servers with twistd.
 from twisted.conch import unix
 from twisted.conch import checkers as conch_checkers
 from twisted.conch.openssh_compat import factory
-from twisted.cred import portal, checkers, strcred
+from twisted.cred import portal, strcred
 from twisted.python import usage
 from twisted.application import strports
-try:
-    from twisted.cred import pamauth
-except ImportError:
-    pamauth = None
-
 
 
 class Options(usage.Options, strcred.AuthOptionMixin):
     synopsis = "[-i <interface>] [-p <port>] [-d <dir>] "
     longdesc = ("Makes a Conch SSH server.  If no authentication methods are "
-        "specified, the default authentication methods are UNIX passwords, "
-        "SSH public keys, and PAM if it is available.  If --auth options are "
+        "specified, the default authentication methods are UNIX passwords "
+        "and SSH public keys.  If --auth options are "
         "passed, only the measures specified will be used.")
     optParameters = [
         ["interface", "i", "", "local interface to which we listen"],
@@ -42,15 +37,13 @@ class Options(usage.Options, strcred.AuthOptionMixin):
     def __init__(self, *a, **kw):
         usage.Options.__init__(self, *a, **kw)
 
-        # call the default addCheckers (for backwards compatibility) that will
+        # Call the default addCheckers (for backwards compatibility) that will
         # be used if no --auth option is provided - note that conch's
         # UNIXPasswordDatabase is used, instead of twisted.plugins.cred_unix's
         # checker
         super(Options, self).addChecker(conch_checkers.UNIXPasswordDatabase())
-        super(Options, self).addChecker(conch_checkers.SSHPublicKeyDatabase())
-        if pamauth is not None:
-            super(Options, self).addChecker(
-                checkers.PluggableAuthenticationModulesChecker())
+        super(Options, self).addChecker(conch_checkers.SSHPublicKeyChecker(
+            conch_checkers.UNIXAuthorizedKeysFiles()))
         self._usingDefaultAuth = True
 
 
@@ -73,9 +66,10 @@ def makeService(config):
     Construct a service for operating a SSH server.
 
     @param config: An L{Options} instance specifying server options, including
-    where server keys are stored and what authentication methods to use.
+        where server keys are stored and what authentication methods to use.
 
-    @return: An L{IService} provider which contains the requested SSH server.
+    @return: A L{twisted.application.service.IService} provider which contains
+        the requested SSH server.
     """
 
     t = factory.OpenSSHFactory()

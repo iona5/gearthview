@@ -13,7 +13,7 @@ from twisted.internet.interfaces import (ITransport, IPushProducer, IConsumer,
 from twisted.internet.address import IPv4Address
 from twisted.trial.unittest import TestCase
 from twisted.test.proto_helpers import (StringTransport, MemoryReactor,
-    RaisingMemoryReactor)
+    RaisingMemoryReactor, NonStreamingProducer)
 from twisted.internet.protocol import ClientFactory, Factory
 
 
@@ -43,8 +43,8 @@ class StringTransportTests(TestCase):
         producer = object()
         streaming = object()
         self.transport.registerProducer(producer, streaming)
-        self.assertIdentical(self.transport.producer, producer)
-        self.assertIdentical(self.transport.streaming, streaming)
+        self.assertIs(self.transport.producer, producer)
+        self.assertIs(self.transport.streaming, streaming)
 
 
     def test_disallowedRegisterProducer(self):
@@ -56,7 +56,7 @@ class StringTransportTests(TestCase):
         self.transport.registerProducer(producer, True)
         self.assertRaises(
             RuntimeError, self.transport.registerProducer, object(), False)
-        self.assertIdentical(self.transport.producer, producer)
+        self.assertIs(self.transport.producer, producer)
         self.assertTrue(self.transport.streaming)
 
 
@@ -70,9 +70,9 @@ class StringTransportTests(TestCase):
         newProducer = object()
         self.transport.registerProducer(oldProducer, False)
         self.transport.unregisterProducer()
-        self.assertIdentical(self.transport.producer, None)
+        self.assertIsNone(self.transport.producer)
         self.transport.registerProducer(newProducer, True)
-        self.assertIdentical(self.transport.producer, newProducer)
+        self.assertIs(self.transport.producer, newProducer)
         self.assertTrue(self.transport.streaming)
 
 
@@ -171,16 +171,16 @@ class StringTransportTests(TestCase):
         value is returned from L{StringTransport.getHost}.
         """
         address = object()
-        self.assertIdentical(StringTransport(address).getHost(), address)
+        self.assertIs(StringTransport(address).getHost(), address)
 
 
     def test_specifiedPeerAddress(self):
         """
         If a peer address is passed to L{StringTransport.__init__}, that
         value is returned from L{StringTransport.getPeer}.
-        """        
+        """
         address = object()
-        self.assertIdentical(
+        self.assertIs(
             StringTransport(peerAddress=address).getPeer(), address)
 
 
@@ -248,11 +248,11 @@ class ReactorTests(TestCase):
             verifyObject(IAddress, address)
             self.assertEqual(address.host, "test.example.com")
             self.assertEqual(address.port, 8321)
-        connector = memoryReactor.connectUNIX("/fake/path", ClientFactory())
+        connector = memoryReactor.connectUNIX(b"/fake/path", ClientFactory())
         verifyObject(IConnector, connector)
         address = connector.getDestination()
         verifyObject(IAddress, address)
-        self.assertEqual(address.name, "/fake/path")
+        self.assertEqual(address.name, b"/fake/path")
 
 
     def test_listenDefaultHost(self):
@@ -272,8 +272,130 @@ class ReactorTests(TestCase):
             verifyObject(IAddress, address)
             self.assertEqual(address.host, '0.0.0.0')
             self.assertEqual(address.port, 8242)
-        port = memoryReactor.listenUNIX("/path/to/socket", Factory())
+        port = memoryReactor.listenUNIX(b"/path/to/socket", Factory())
         verifyObject(IListeningPort, port)
         address = port.getHost()
         verifyObject(IAddress, address)
-        self.assertEqual(address.name, "/path/to/socket")
+        self.assertEqual(address.name, b"/path/to/socket")
+
+
+    def test_readers(self):
+        """
+        Adding, removing, and listing readers works.
+        """
+        reader = object()
+        reactor = MemoryReactor()
+
+        reactor.addReader(reader)
+        reactor.addReader(reader)
+
+        self.assertEqual(reactor.getReaders(), [reader])
+
+        reactor.removeReader(reader)
+
+        self.assertEqual(reactor.getReaders(), [])
+
+
+    def test_writers(self):
+        """
+        Adding, removing, and listing writers works.
+        """
+        writer = object()
+        reactor = MemoryReactor()
+
+        reactor.addWriter(writer)
+        reactor.addWriter(writer)
+
+        self.assertEqual(reactor.getWriters(), [writer])
+
+        reactor.removeWriter(writer)
+
+        self.assertEqual(reactor.getWriters(), [])
+
+
+
+class TestConsumer(object):
+    """
+    A very basic test consumer for use with the NonStreamingProducerTests.
+    """
+    def __init__(self):
+        self.writes = []
+        self.producer = None
+        self.producerStreaming = None
+
+
+    def registerProducer(self, producer, streaming):
+        """
+        Registers a single producer with this consumer. Just keeps track of it.
+
+        @param producer: The producer to register.
+        @param streaming: Whether the producer is a streaming one or not.
+        """
+        self.producer = producer
+        self.producerStreaming = streaming
+
+
+    def unregisterProducer(self):
+        """
+        Forget the producer we had previously registered.
+        """
+        self.producer = None
+        self.producerStreaming = None
+
+
+    def write(self, data):
+        """
+        Some data was written to the consumer: stores it for later use.
+
+        @param data: The data to write.
+        """
+        self.writes.append(data)
+
+
+
+class NonStreamingProducerTests(TestCase):
+    """
+    Tests for the L{NonStreamingProducer} to validate behaviour.
+    """
+    def test_producesOnly10Times(self):
+        """
+        When the L{NonStreamingProducer} has resumeProducing called 10 times,
+        it writes the counter each time and then fails.
+        """
+        consumer = TestConsumer()
+        producer = NonStreamingProducer(consumer)
+        consumer.registerProducer(producer, False)
+
+        self.assertIs(consumer.producer, producer)
+        self.assertIs(producer.consumer, consumer)
+        self.assertFalse(consumer.producerStreaming)
+
+        for _ in range(10):
+            producer.resumeProducing()
+
+        # We should have unregistered the producer and printed the 10 results.
+        expectedWrites = [
+            b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9'
+        ]
+        self.assertIsNone(consumer.producer)
+        self.assertIsNone(consumer.producerStreaming)
+        self.assertIsNone(producer.consumer)
+        self.assertEqual(consumer.writes, expectedWrites)
+
+        # Another attempt to produce fails.
+        self.assertRaises(RuntimeError, producer.resumeProducing)
+
+
+    def test_cannotPauseProduction(self):
+        """
+        When the L{NonStreamingProducer} is paused, it raises a
+        L{RuntimeError}.
+        """
+        consumer = TestConsumer()
+        producer = NonStreamingProducer(consumer)
+        consumer.registerProducer(producer, False)
+
+        # Produce once, just to be safe.
+        producer.resumeProducing()
+
+        self.assertRaises(RuntimeError, producer.pauseProducing)
