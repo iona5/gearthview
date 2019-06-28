@@ -56,17 +56,17 @@ from gearthview.gearthviewdialog import gearthviewDialog
 
 
 ### important
-import qtreactor.qt4reactor as qt4reactor
+import qt5reactor.qt5reactor as qt5reactor
 try:
-    qt4reactor.install()
-except qt4reactor.ReactorAlreadyInstalledError:
+    qt5reactor.install()
+except qt5reactor.ReactorAlreadyInstalledError:
     print("still installed, doing nothing")
 except AttributeError:
     pass
 except:
     raise
 
-## INSTALL qt4reactor before importing the twisted stuff
+## INSTALL qt5reactor before importing the twisted stuff
 from twisted.internet import reactor
 from twisted.web import server
 from twisted.web.static import File
