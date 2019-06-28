@@ -12,8 +12,6 @@
 #
 ##############################################################################
 """Base Mapping tests
-
-$Id: basemapping.py 110736 2010-04-11 10:59:30Z regebro $
 """
 from operator import __getitem__
 
@@ -21,7 +19,7 @@ def testIReadMapping(self, inst, state, absent):
     for key in state:
         self.assertEqual(inst[key], state[key])
         self.assertEqual(inst.get(key, None), state[key])
-        self.failUnless(key in inst)
+        self.assertTrue(key in inst)
 
     for key in absent:
         self.assertEqual(inst.get(key, None), None)

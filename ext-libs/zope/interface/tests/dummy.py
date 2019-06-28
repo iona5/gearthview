@@ -11,14 +11,13 @@
 # FOR A PARTICULAR PURPOSE.
 #
 ##############################################################################
-"""Dummy Module
-
-$Id: dummy.py 110736 2010-04-11 10:59:30Z regebro $
+""" Dummy Module
 """
 from zope.interface import moduleProvides
-from zope.interface.tests.ifoo import IFoo
+from zope.interface.tests.idummy import IDummyModule
 
-moduleProvides(IFoo)
+moduleProvides(IDummyModule)
 
 def bar(baz):
-    pass
+    # Note:  no 'self', because the module provides the interface directly.
+    raise NotImplementedError()

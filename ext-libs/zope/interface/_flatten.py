@@ -14,8 +14,6 @@
 """Adapter-style interface registry
 
 See Adapter class.
-
-$Id: _flatten.py 110536 2010-04-06 02:59:44Z tseaver $
 """
 from zope.interface import Declaration
 

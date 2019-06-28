@@ -16,7 +16,9 @@
 from __future__ import generators
 
 import sys
+from types import MethodType
 from types import FunctionType
+import warnings
 import weakref
 
 from zope.interface.exceptions import Invalid
@@ -46,6 +48,9 @@ def taggedValue(key, value):
 
 
 class Element(object):
+    """
+    Default implementation of `zope.interface.interfaces.IElement`.
+    """
 
     # We can't say this yet because we don't have enough
     # infrastructure in place.
@@ -53,8 +58,6 @@ class Element(object):
     #implements(IElement)
 
     def __init__(self, __name__, __doc__=''):
-        """Create an 'attribute' description
-        """
         if not __doc__ and __name__.find(' ') >= 0:
             __doc__ = __name__
             __name__ = None
@@ -91,69 +94,20 @@ class SpecificationBasePy(object):
 
     def providedBy(self, ob):
         """Is the interface implemented by an object
-
-          >>> from zope.interface import *
-          >>> class I1(Interface):
-          ...     pass
-          >>> class C(object):
-          ...     implements(I1)
-          >>> c = C()
-          >>> class X(object):
-          ...     pass
-          >>> x = X()
-          >>> I1.providedBy(x)
-          False
-          >>> I1.providedBy(C)
-          False
-          >>> I1.providedBy(c)
-          True
-          >>> directlyProvides(x, I1)
-          >>> I1.providedBy(x)
-          True
-          >>> directlyProvides(C, I1)
-          >>> I1.providedBy(C)
-          True
-
         """
         spec = providedBy(ob)
         return self in spec._implied
 
     def implementedBy(self, cls):
         """Test whether the specification is implemented by a class or factory.
-        Raise TypeError if argument is neither a class nor a callable."""
+
+        Raise TypeError if argument is neither a class nor a callable.
+        """
         spec = implementedBy(cls)
         return self in spec._implied
 
     def isOrExtends(self, interface):
         """Is the interface the same as or extend the given interface
-
-        Examples::
-
-          >>> from zope.interface import Interface
-          >>> from zope.interface.declarations import Declaration
-          >>> class I1(Interface): pass
-          ...
-          >>> class I2(I1): pass
-          ...
-          >>> class I3(Interface): pass
-          ...
-          >>> class I4(I3): pass
-          ...
-          >>> spec = Declaration()
-          >>> int(spec.extends(Interface))
-          1
-          >>> spec = Declaration(I2)
-          >>> int(spec.extends(Interface))
-          1
-          >>> int(spec.extends(I1))
-          1
-          >>> int(spec.extends(I2))
-          1
-          >>> int(spec.extends(I3))
-          0
-          >>> int(spec.extends(I4))
-          0
-
         """
         return interface in self._implied
 
@@ -161,7 +115,7 @@ class SpecificationBasePy(object):
 
 SpecificationBase = SpecificationBasePy
 try:
-    from _zope_interface_coptimizations import SpecificationBase
+    from zope.interface._zope_interface_coptimizations import SpecificationBase
 except ImportError:
     pass
 
@@ -199,17 +153,17 @@ class InterfaceBasePy(object):
             if adapter is not None:
                 return adapter
 
-    
+
 InterfaceBase = InterfaceBasePy
 try:
-    from _zope_interface_coptimizations import InterfaceBase
+    from zope.interface._zope_interface_coptimizations import InterfaceBase
 except ImportError:
     pass
 
 
 adapter_hooks = []
 try:
-    from _zope_interface_coptimizations import adapter_hooks
+    from zope.interface._zope_interface_coptimizations import adapter_hooks
 except ImportError:
     pass
 
@@ -223,36 +177,8 @@ class Specification(SpecificationBase):
     This class is a base class for both interfaces themselves and for
     interface specifications (declarations).
 
-    Specifications are mutable.  If you reassign their cases, their
+    Specifications are mutable.  If you reassign their bases, their
     relations with other specifications are adjusted accordingly.
-
-    For example:
-
-    >>> from zope.interface import Interface
-    >>> class I1(Interface):
-    ...     pass
-    >>> class I2(I1):
-    ...     pass
-    >>> class I3(I2):
-    ...     pass
-
-    >>> [i.__name__ for i in I1.__bases__]
-    ['Interface']
-
-    >>> [i.__name__ for i in I2.__bases__]
-    ['I1']
-
-    >>> I3.extends(I1)
-    1
-
-    >>> I2.__bases__ = (Interface, )
-
-    >>> [i.__name__ for i in I2.__bases__]
-    ['Interface']
-
-    >>> I3.extends(I1)
-    0
-
     """
 
     # Copy some base class methods for speed
@@ -323,31 +249,12 @@ class Specification(SpecificationBase):
             implied[ancestor] = ()
 
         # Now, advise our dependents of change:
-        for dependent in self.dependents.keys():
+        for dependent in tuple(self.dependents.keys()):
             dependent.changed(originally_changed)
 
 
     def interfaces(self):
-        """Return an iterator for the interfaces in the specification
-
-        for example::
-
-          >>> from zope.interface import Interface
-          >>> class I1(Interface): pass
-          ...
-          >>> class I2(I1): pass
-          ...
-          >>> class I3(Interface): pass
-          ...
-          >>> class I4(I3): pass
-          ...
-          >>> spec = Specification((I2, I3))
-          >>> spec = Specification((I4, spec))
-          >>> i = spec.interfaces()
-          >>> [x.getName() for x in i]
-          ['I4', 'I2', 'I3']
-          >>> list(i)
-          []
+        """Return an iterator for the interfaces in the specification.
         """
         seen = {}
         for base in self.__bases__:
@@ -362,40 +269,6 @@ class Specification(SpecificationBase):
 
         Test whether an interface in the specification extends the
         given interface
-
-        Examples::
-
-          >>> from zope.interface import Interface
-          >>> from zope.interface.declarations import Declaration
-          >>> class I1(Interface): pass
-          ...
-          >>> class I2(I1): pass
-          ...
-          >>> class I3(Interface): pass
-          ...
-          >>> class I4(I3): pass
-          ...
-          >>> spec = Declaration()
-          >>> int(spec.extends(Interface))
-          1
-          >>> spec = Declaration(I2)
-          >>> int(spec.extends(Interface))
-          1
-          >>> int(spec.extends(I1))
-          1
-          >>> int(spec.extends(I2))
-          1
-          >>> int(spec.extends(I3))
-          0
-          >>> int(spec.extends(I4))
-          0
-          >>> I2.extends(I2)
-          0
-          >>> I2.extends(I2, False)
-          1
-          >>> I2.extends(I2, strict=False)
-          1
-
         """
         return ((interface in self._implied)
                 and
@@ -449,7 +322,7 @@ class InterfaceClass(Element, InterfaceBase, Specification):
                     # This is how cPython figures out the module of
                     # a class, but of course it does it in C. :-/
                     __module__ = sys._getframe(1).f_globals['__name__']
-                except (AttributeError, KeyError):
+                except (AttributeError, KeyError): # pragma: no cover
                     pass
 
         self.__module__ = __module__
@@ -479,9 +352,12 @@ class InterfaceClass(Element, InterfaceBase, Specification):
 
         # Make sure that all recorded attributes (and methods) are of type
         # `Attribute` and `Method`
-        for name, attr in attrs.items():
-            if name == '__locals__':
-                # This happens under Python 3 sometimes, not sure why. /regebro
+        for name, attr in list(attrs.items()):
+            if name in ('__locals__', '__qualname__', '__annotations__'):
+                # __locals__: Python 3 sometimes adds this.
+                # __qualname__: PEP 3155 (Python 3.3+)
+                # __annotations__: PEP 3107 (Python 3.0+)
+                del attrs[name]
                 continue
             if isinstance(attr, Attribute):
                 attr.interface = self
@@ -499,19 +375,7 @@ class InterfaceClass(Element, InterfaceBase, Specification):
         self.__identifier__ = "%s.%s" % (self.__module__, self.__name__)
 
     def interfaces(self):
-        """Return an iterator for the interfaces in the specification
-
-        for example::
-
-          >>> from zope.interface import Interface
-          >>> class I1(Interface): pass
-          ...
-          >>>
-          >>> i = I1.interfaces()
-          >>> [x.getName() for x in i]
-          ['I1']
-          >>> list(i)
-          []
+        """Return an iterator for the interfaces in the specification.
         """
         yield self
 
@@ -569,26 +433,12 @@ class InterfaceClass(Element, InterfaceBase, Specification):
     def queryDescriptionFor(self, name, default=None):
         return self.get(name, default)
 
-    def deferred(self):
-        """Return a defered class corresponding to the interface."""
-        if hasattr(self, "_deferred"): return self._deferred
-
-        klass={}
-        exec "class %s: pass" % self.__name__ in klass
-        klass=klass[self.__name__]
-
-        self.__d(klass)
-
-        self._deferred=klass
-
-        return klass
-
     def validateInvariants(self, obj, errors=None):
         """validate object to defined invariants."""
         for call in self.queryTaggedValue('invariants', []):
             try:
                 call(obj)
-            except Invalid, e:
+            except Invalid as e:
                 if errors is None:
                     raise
                 else:
@@ -602,19 +452,7 @@ class InterfaceClass(Element, InterfaceBase, Specification):
         if errors:
             raise Invalid(errors)
 
-    def _getInterface(self, ob, name):
-        """Retrieve a named interface."""
-        return None
-
-    def __d(self, klass):
-        for k, v in self.__attrs.items():
-            if isinstance(v, Method) and not (k in klass.__dict__):
-                setattr(klass, k, v)
-
-        for b in self.__bases__:
-            b.__d(klass)
-
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         try:
             return self._v_repr
         except AttributeError:
@@ -629,7 +467,7 @@ class InterfaceClass(Element, InterfaceBase, Specification):
     def _call_conform(self, conform):
         try:
             return conform(self)
-        except TypeError:
+        except TypeError: # pragma: no cover
             # We got a TypeError. It might be an error raised by
             # the __conform__ implementation, or *we* may have
             # made the TypeError by calling an unbound method
@@ -643,12 +481,12 @@ class InterfaceClass(Element, InterfaceBase, Specification):
                 raise
             # This clever trick is from Phillip Eby
 
-        return None
+        return None # pragma: no cover
 
     def __reduce__(self):
         return self.__name__
 
-    def __cmp(self, o1, o2):
+    def __cmp(self, other):
         # Yes, I did mean to name this __cmp, rather than __cmp__.
         # It is a private method used by __lt__ and __gt__.
         # I don't want to override __eq__ because I want the default
@@ -670,30 +508,45 @@ class InterfaceClass(Element, InterfaceBase, Specification):
         sort before None.
 
         """
-        if o1 == o2:
-            return 0
-
-        if o1 is None:
-            return 1
-        if o2 is None:
+        if other is None:
             return -1
 
-        n1 = (getattr(o1, '__name__', ''),
-              getattr(getattr(o1,  '__module__', None), '__name__', ''))
-        n2 = (getattr(o2, '__name__', ''),
-              getattr(getattr(o2,  '__module__', None), '__name__', ''))
+        n1 = (getattr(self, '__name__', ''), getattr(self,  '__module__', ''))
+        n2 = (getattr(other, '__name__', ''), getattr(other,  '__module__', ''))
 
+        # This spelling works under Python3, which doesn't have cmp().
         return (n1 > n2) - (n1 < n2)
 
+    def __hash__(self):
+        d = self.__dict__
+        if '__module__' not in d or '__name__' not in d: # pragma: no cover
+            warnings.warn('Hashing uninitialized InterfaceClass instance')
+            return 1
+        return hash((self.__name__, self.__module__))
+
+    def __eq__(self, other):
+        c = self.__cmp(other)
+        return c == 0
+
+    def __ne__(self, other):
+        c = self.__cmp(other)
+        return c != 0
+
     def __lt__(self, other):
-        c = self.__cmp(self, other)
-        #print '<', self, other, c < 0, c
+        c = self.__cmp(other)
         return c < 0
 
+    def __le__(self, other):
+        c = self.__cmp(other)
+        return c <= 0
+
     def __gt__(self, other):
-        c = self.__cmp(self, other)
-        #print '>', self, other, c > 0, c
+        c = self.__cmp(other)
         return c > 0
+
+    def __ge__(self, other):
+        c = self.__cmp(other)
+        return c >= 0
 
 
 Interface = InterfaceClass("Interface", __module__ = 'zope.interface')
@@ -722,6 +575,18 @@ class Method(Attribute):
     #
     # implements(IMethod)
 
+    positional = required = ()
+    _optional = varargs = kwargs = None
+    def _get_optional(self):
+        if self._optional is None:
+            return {}
+        return self._optional
+    def _set_optional(self, opt):
+        self._optional = opt
+    def _del_optional(self):
+        self._optional = None
+    optional = property(_get_optional, _set_optional, _del_optional)
+
     def __call__(self, *args, **kw):
         raise BrokenImplementation(self.interface, self.__name__)
 
@@ -738,7 +603,7 @@ class Method(Attribute):
         for v in self.positional:
             sig.append(v)
             if v in self.optional.keys():
-                sig[-1] += "=" + `self.optional[v]`
+                sig[-1] += "=" + repr(self.optional[v])
         if self.varargs:
             sig.append("*" + self.varargs)
         if self.kwargs:
@@ -746,12 +611,11 @@ class Method(Attribute):
 
         return "(%s)" % ", ".join(sig)
 
-
 def fromFunction(func, interface=None, imlevel=0, name=None):
     name = name or func.__name__
     method = Method(name, func.__doc__)
-    defaults = func.func_defaults or ()
-    code = func.func_code
+    defaults = getattr(func, '__defaults__', None) or ()
+    code = func.__code__
     # Number of positional arguments
     na = code.co_argcount-imlevel
     names = code.co_varnames[imlevel:]
@@ -793,7 +657,10 @@ def fromFunction(func, interface=None, imlevel=0, name=None):
 
 
 def fromMethod(meth, interface=None, name=None):
-    func = meth.im_func
+    if isinstance(meth, MethodType):
+        func = meth.__func__
+    else:
+        func = meth
     return fromFunction(func, interface, imlevel=1, name=name)
 
 

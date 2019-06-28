@@ -4,26 +4,17 @@
 # All Rights Reserved.
 #
 # This software is subject to the provisions of the Zope Public License,
-# Version 2.0 (ZPL).  A copy of the ZPL should accompany this distribution.
+# Version 2.1 (ZPL).  A copy of the ZPL should accompany this distribution.
 # THIS SOFTWARE IS PROVIDED "AS IS" AND ANY AND ALL EXPRESS OR IMPLIED
 # WARRANTIES ARE DISCLAIMED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 # WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST INFRINGEMENT, AND FITNESS
 # FOR A PARTICULAR PURPOSE.
 #
 ##############################################################################
-import doctest
 import unittest
 
-def test_interface_import():
-    """
-    >>> import zope.interface.common.interfaces
-    """
+class TestInterfaceImport(unittest.TestCase):
 
-def test_suite():
-    return unittest.TestSuite((
-        doctest.DocTestSuite(),
-        ))
-
-if __name__ == '__main__':
-    unittest.main(defaultTest='test_suite')
-
+    def test_import(self):
+        import zope.interface.common.interfaces as x
+        self.assertIsNotNone(x)

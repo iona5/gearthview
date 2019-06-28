@@ -12,8 +12,6 @@
 #
 ##############################################################################
 """Verify interface implementations
-
-$Id: verify.py 110699 2010-04-09 08:16:17Z regebro $
 """
 from zope.interface.exceptions import BrokenImplementation, DoesNotImplement
 from zope.interface.exceptions import BrokenMethodImplementation
@@ -68,19 +66,27 @@ def _verify(iface, candidate, tentative=0, vtype=None):
             continue
 
         if isinstance(attr, FunctionType):
-            if sys.version[0] == '3' and isinstance(candidate, type):
+            if sys.version_info[0] >= 3 and isinstance(candidate, type) and vtype == 'c':
                 # This is an "unbound method" in Python 3.
-                meth = fromFunction(attr, iface, name=name, imlevel=1)
+                # Only unwrap this if we're verifying implementedBy;
+                # otherwise we can unwrap @staticmethod on classes that directly
+                # provide an interface.
+                meth = fromFunction(attr, iface, name=name,
+                                    imlevel=1)
             else:
                 # Nope, just a normal function
                 meth = fromFunction(attr, iface, name=name)
         elif (isinstance(attr, MethodTypes)
-              and type(attr.im_func) is FunctionType):
+              and type(attr.__func__) is FunctionType):
             meth = fromMethod(attr, iface, name)
+        elif isinstance(attr, property) and vtype == 'c':
+            # We without an instance we cannot be sure it's not a
+            # callable.
+            continue
         else:
             if not callable(attr):
                 raise BrokenMethodImplementation(name, "Not a method")
-            # sigh, it's callable, but we don't know how to intrspect it, so
+            # sigh, it's callable, but we don't know how to introspect it, so
             # we have to give it a pass.
             continue
 

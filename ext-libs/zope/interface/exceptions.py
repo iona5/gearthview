@@ -12,8 +12,6 @@
 #
 ##############################################################################
 """Interface-specific exceptions
-
-$Id: exceptions.py 110536 2010-04-06 02:59:44Z tseaver $
 """
 
 class Invalid(Exception):

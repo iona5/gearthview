@@ -15,16 +15,24 @@
 
 This module provides a function, asStructuredText, for rendering an
 interface as structured text.
-
-$Id: document.py 110536 2010-04-06 02:59:44Z tseaver $
 """
 import zope.interface
 
-def asStructuredText(I, munge=0):
-    """ Output structured text format.  Note, this will whack any existing
-    'structured' format of the text.  """
 
-    r = [I.getName()]
+def asStructuredText(I, munge=0, rst=False):
+    """ Output structured text format.  Note, this will whack any existing
+    'structured' format of the text.
+
+    If `rst=True`, then the output will quote all code as inline literals in
+    accordance with 'reStructuredText' markup principles.
+    """
+
+    if rst:
+        inline_literal = lambda s: "``%s``" % (s,)
+    else:
+        inline_literal = lambda s: s
+
+    r = [inline_literal(I.getName())]
     outp = r.append
     level = 1
 
@@ -39,18 +47,17 @@ def asStructuredText(I, munge=0):
         outp(_justify_and_indent("This interface extends:", level, munge))
         level += 1
         for b in bases:
-            item = "o %s" % b.getName()
+            item = "o %s" % inline_literal(b.getName())
             outp(_justify_and_indent(_trim_doc_string(item), level, munge))
         level -= 1
 
-    namesAndDescriptions = I.namesAndDescriptions()
-    namesAndDescriptions.sort()
+    namesAndDescriptions = sorted(I.namesAndDescriptions())
 
     outp(_justify_and_indent("Attributes:", level, munge))
     level += 1
     for name, desc in namesAndDescriptions:
         if not hasattr(desc, 'getSignatureString'):   # ugh...
-            item = "%s -- %s" % (desc.getName(),
+            item = "%s -- %s" % (inline_literal(desc.getName()),
                                  desc.getDoc() or 'no documentation')
             outp(_justify_and_indent(_trim_doc_string(item), level, munge))
     level -= 1
@@ -59,12 +66,18 @@ def asStructuredText(I, munge=0):
     level += 1
     for name, desc in namesAndDescriptions:
         if hasattr(desc, 'getSignatureString'):   # ugh...
-            item = "%s%s -- %s" % (desc.getName(),
-                                   desc.getSignatureString(),
-                                   desc.getDoc() or 'no documentation')
+            _call = "%s%s" % (desc.getName(), desc.getSignatureString())
+            item = "%s -- %s" % (inline_literal(_call),
+                                 desc.getDoc() or 'no documentation')
             outp(_justify_and_indent(_trim_doc_string(item), level, munge))
 
     return "\n\n".join(r) + "\n\n"
+
+
+def asReStructuredText(I, munge=0):
+    """ Output reStructuredText format.  Note, this will whack any existing
+    'structured' format of the text."""
+    return asStructuredText(I, munge=munge, rst=True)
 
 
 def _trim_doc_string(text):

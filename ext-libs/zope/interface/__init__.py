@@ -47,28 +47,37 @@ The package has several public modules:
   o `verify` has utilities for verifying implementations of interfaces.
 
 See the module doc strings for more information.
-
-$Id: __init__.py 110699 2010-04-09 08:16:17Z regebro $
 """
 __docformat__ = 'restructuredtext'
 
-from zope.interface.interface import Interface, _wire
+from zope.interface.interface import Interface
+from zope.interface.interface import _wire
 
 # Need to actually get the interface elements to implement the right interfaces
 _wire()
 del _wire
 
-from zope.interface.interface import Attribute, invariant, taggedValue
-
-from zope.interface.declarations import providedBy, implementedBy
-from zope.interface.declarations import classImplements, classImplementsOnly
-from zope.interface.declarations import directlyProvidedBy, directlyProvides
-from zope.interface.declarations import alsoProvides, provider
-from zope.interface.declarations import implementer, implementer_only
-from zope.interface.declarations import implements, implementsOnly
-from zope.interface.declarations import classProvides, moduleProvides
-from zope.interface.declarations import noLongerProvides, Declaration
+from zope.interface.declarations import Declaration
+from zope.interface.declarations import alsoProvides
+from zope.interface.declarations import classImplements
+from zope.interface.declarations import classImplementsOnly
+from zope.interface.declarations import classProvides
+from zope.interface.declarations import directlyProvidedBy
+from zope.interface.declarations import directlyProvides
+from zope.interface.declarations import implementedBy
+from zope.interface.declarations import implementer
+from zope.interface.declarations import implementer_only
+from zope.interface.declarations import implements
+from zope.interface.declarations import implementsOnly
+from zope.interface.declarations import moduleProvides
+from zope.interface.declarations import named
+from zope.interface.declarations import noLongerProvides
+from zope.interface.declarations import providedBy
+from zope.interface.declarations import provider
 from zope.interface.exceptions import Invalid
+from zope.interface.interface import Attribute
+from zope.interface.interface import invariant
+from zope.interface.interface import taggedValue
 
 # The following are to make spec pickles cleaner
 from zope.interface.declarations import Provides

@@ -12,8 +12,6 @@
 #
 ##############################################################################
 """Test for datetime interfaces
-
-$Id: test_idatetime.py 110536 2010-04-06 02:59:44Z tseaver $
 """
 
 import unittest
@@ -37,13 +35,3 @@ class TestDateTimeInterfaces(unittest.TestCase):
         verifyClass(IDateClass, date)
         verifyClass(IDateTimeClass, datetime)
         verifyClass(ITimeClass, time)
-
-
-def test_suite():
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestDateTimeInterfaces))
-    return suite
-
-
-if __name__ == '__main__':
-    unittest.main()

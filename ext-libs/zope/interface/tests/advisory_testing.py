@@ -11,21 +11,32 @@
 # FOR A PARTICULAR PURPOSE.
 #
 ##############################################################################
-"""Test Element meta-class.
-"""
+import sys
 
-import unittest
-from zope.interface.interface import Element
+from zope.interface.advice import addClassAdvisor
+from zope.interface.advice import getFrameInfo
 
-class TestElement(unittest.TestCase):
+my_globals = globals()
 
-    def test_taggedValues(self):
-        """Test that we can update tagged values of more than one element
-        """
+def ping(log, value):
 
-        e1 = Element("foo")
-        e2 = Element("bar")
-        e1.setTaggedValue("x", 1)
-        e2.setTaggedValue("x", 2)
-        self.assertEqual(e1.getTaggedValue("x"), 1)
-        self.assertEqual(e2.getTaggedValue("x"), 2)
+    def pong(klass):
+        log.append((value,klass))
+        return [klass]
+
+    addClassAdvisor(pong)
+
+try:
+    from types import ClassType
+
+    class ClassicClass:
+        __metaclass__ = ClassType
+        classLevelFrameInfo = getFrameInfo(sys._getframe())
+except ImportError:
+    ClassicClass = None
+
+class NewStyleClass:
+    __metaclass__ = type
+    classLevelFrameInfo = getFrameInfo(sys._getframe())
+
+moduleLevelFrameInfo = getFrameInfo(sys._getframe())
