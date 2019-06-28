@@ -45,7 +45,7 @@ def icon():
 
 
 def qgisMinimumVersion():
-    return "2.0"
+    return "3.4"
 
 def author():
     return "geodrinx"

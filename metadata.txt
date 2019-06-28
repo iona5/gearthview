@@ -14,10 +14,10 @@ description=GEarthView plugin displays QGis view and features with attributes (s
 about=GEarthView plugin for QuantumGIS 
     .
 category=Plugins
-version=3.0.5b
+version=3.3
 experimental=False
-qgisMinimumVersion=2.0
-qgisMaximumVersion=2.99
+qgisMinimumVersion=3.4
+qgisMaximumVersion=3.99
 author=geodrinx
 email=geodrinx@gmail.com
 icon=./icon.png
