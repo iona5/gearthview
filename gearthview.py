@@ -129,7 +129,7 @@ def P3dPoints_Write(self, adesso):
                 num = num + 1
                 geom = feat.geometry()
                 Name = feat.attributes()[idx]
-                testoWKT = geom.exportToWkt() + "\n"
+                testoWKT = geom.asWkt() + "\n"
                 istr = testoWKT.split(' ')
                 Z = str(istr[3])
                 Z = Z.replace(',','')
@@ -885,7 +885,7 @@ def GDX_Publisher(self):
 #  VECCHIO METODO------------------------------------------------------------
 
 #  NUOVO METODO------------------------------------------------------------
-#                   testo = geom.exportToWkt()
+#                   testo = geom.asWkt()
 #                   geometra = ogr.CreateGeometryFromWkt(testo)
 #                   testoKML = geometra.ExportToKML()
 #                   kml.write (testoKML)
@@ -922,7 +922,7 @@ def GDX_Publisher(self):
                     target.ImportFromEPSG(4326)
                     transform = osr.CoordinateTransformation(source, target)
 
-                    testo = geom.exportToWkt()
+                    testo = geom.asWkt()
                     testo = testo.replace("LineStringZ (", "LineString (")
                     testo = testo.replace(" 0,", ",")
                     testo = testo.replace(" 0)", ")")
@@ -972,7 +972,7 @@ def GDX_Publisher(self):
                     target = osr.SpatialReference()
                     target.ImportFromEPSG(4326)
                     transform = osr.CoordinateTransformation(source, target)
-                    testo = geom.exportToWkt()
+                    testo = geom.asWkt()
                     istr = testo.split(' ')
 
                     testo = testo.replace("PolygonZ (", "Polygon (")
