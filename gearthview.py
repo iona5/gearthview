@@ -50,9 +50,9 @@ import time
 import codecs
 
 # Initialize Qt resources from file resources.py
-import resources_rc
+import gearthview.resources_rc
 # Import the code for the dialog
-from gearthviewdialog import gearthviewDialog
+from gearthview.gearthviewdialog import gearthviewDialog
 
 
 ### important

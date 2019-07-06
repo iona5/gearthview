@@ -55,5 +55,5 @@ def email():
 
 def classFactory(iface):
     # load gearthview class from file gearthview
-    from gearthview import gearthview
+    from gearthview.gearthview import gearthview
     return gearthview(iface)
