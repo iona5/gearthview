@@ -585,46 +585,21 @@ def GDX_Publisher(self):
     image.save(outputFile, "png")
 
     layer = mapCanvas.currentLayer()
-    crsSrc = srs
-    crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
-    xform = QgsCoordinateTransform(crsSrc, crsDest, qgisProject)
 
-    x1 = mapRect.xMinimum()
-    y1 = mapRect.yMinimum()
+    x1 = renderRect.xMinimum()
+    y1 = renderRect.yMinimum()
 
-    x2 = mapRect.xMaximum()
-    y2 = mapRect.yMinimum()
+    x2 = renderRect.xMaximum()
+    y2 = renderRect.yMinimum()
 
-    x3 = mapRect.xMaximum()
-    y3 = mapRect.yMaximum()
+    x3 = renderRect.xMaximum()
+    y3 = renderRect.yMaximum()
 
-    x4 = mapRect.xMinimum()
-    y4 = mapRect.yMaximum()
+    x4 = renderRect.xMinimum()
+    y4 = renderRect.yMaximum()
 
     xc = (x1 + x3) / 2.
     yc = (y1 + y3) / 2.
-
-    pt1 = xform.transform(QgsPointXY(x1, y1))
-    pt2 = xform.transform(QgsPointXY(x2, y2))
-    pt3 = xform.transform(QgsPointXY(x3, y3))
-    pt4 = xform.transform(QgsPointXY(x4, y4))
-
-    pt5 = xform.transform(QgsPointXY(xc, yc))
-
-    xc = pt5.x()
-    yc = pt5.y()
-
-    x1 = pt1.x()
-    y1 = pt1.y()
-
-    x2 = pt2.x()
-    y2 = pt2.y()
-
-    x3 = pt3.x()
-    y3 = pt3.y()
-
-    x4 = pt4.x()
-    y4 = pt4.y()
 
 
 
