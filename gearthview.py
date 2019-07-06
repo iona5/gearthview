@@ -339,8 +339,8 @@ def startGeoDrink_Server(self):
                 x2Geo = lon + float(raggioGeo)
                 y2Geo = lat + float(raggioGeo)
 
-                pt1 = xform.transform(QgsPoint(x1Geo, y1Geo))
-                pt2 = xform.transform(QgsPoint(x2Geo, y2Geo))
+                pt1 = xform.transform(QgsPointXY(x1Geo, y1Geo))
+                pt2 = xform.transform(QgsPointXY(x2Geo, y2Geo))
 
                 x1 = pt1.x()
                 y1 = pt1.y()
@@ -420,8 +420,8 @@ def startGeoDrink_Server(self):
                 x2Geo = lon + float(raggioGeo)
                 y2Geo = lat + float(raggioGeo)
 
-                pt1 = xform.transform(QgsPoint(x1Geo, y1Geo))
-                pt2 = xform.transform(QgsPoint(x2Geo, y2Geo))
+                pt1 = xform.transform(QgsPointXY(x1Geo, y1Geo))
+                pt2 = xform.transform(QgsPointXY(x2Geo, y2Geo))
 
                 x1 = pt1.x()
                 y1 = pt1.y()
@@ -477,8 +477,8 @@ def QGEarth_addPoint(self):
             crsSrc = QgsCoordinateReferenceSystem(4326)
             crsDest = QgsCoordinateReferenceSystem(srs)
             xform = QgsCoordinateTransform(crsSrc, crsDest)
-            pt = xform.transform(QgsPoint(lon, lat))
-            gPnt = QgsGeometry.fromPoint(QgsPoint(pt.x(),pt.y()))
+            pt = xform.transform(QgsPointXY(lon, lat))
+            gPnt = QgsGeometry.fromPoint(QgsPointXY(pt.x(),pt.y()))
 
             feature = QgsFeature()
             feature.setGeometry( gPnt )
@@ -612,12 +612,12 @@ def GDX_Publisher(self):
     xc = (x1 + x3) / 2.
     yc = (y1 + y3) / 2.
 
-    pt1 = xform.transform(QgsPoint(x1, y1))
-    pt2 = xform.transform(QgsPoint(x2, y2))
-    pt3 = xform.transform(QgsPoint(x3, y3))
-    pt4 = xform.transform(QgsPoint(x4, y4))
+    pt1 = xform.transform(QgsPointXY(x1, y1))
+    pt2 = xform.transform(QgsPointXY(x2, y2))
+    pt3 = xform.transform(QgsPointXY(x3, y3))
+    pt4 = xform.transform(QgsPointXY(x4, y4))
 
-    pt5 = xform.transform(QgsPoint(xc, yc))
+    pt5 = xform.transform(QgsPointXY(xc, yc))
 
     xc = pt5.x()
     yc = pt5.y()
@@ -841,8 +841,8 @@ def GDX_Publisher(self):
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
             xform2   = QgsCoordinateTransform(crs2, crsDest2)
 
-            pt0 = xform2.transform(QgsPoint(xMin, yMin))
-            pt1 = xform2.transform(QgsPoint(xMax, yMax))
+            pt0 = xform2.transform(QgsPointXY(xMin, yMin))
+            pt1 = xform2.transform(QgsPointXY(xMax, yMax))
             rect = QgsRectangle(pt0, pt1)
 
             rq = QgsFeatureRequest(rect)
@@ -859,7 +859,7 @@ def GDX_Publisher(self):
                     x1 = elem.x()
                     y1 = elem.y()
 
-                    pt1 = xform.transform(QgsPoint(x1, y1))
+                    pt1 = xform.transform(QgsPointXY(x1, y1))
 
                     kml.write ('    <Placemark>\n')
 
@@ -1104,11 +1104,11 @@ def GDX_Publisher2(self, kml):
     xc = (x1 + x3) / 2.
     yc = (y1 + y3) / 2.
 
-    pt1 = xform.transform(QgsPoint(x1, y1))
-    pt2 = xform.transform(QgsPoint(x2, y2))
-    pt3 = xform.transform(QgsPoint(x3, y3))
-    pt4 = xform.transform(QgsPoint(x4, y4))
-    pt5 = xform.transform(QgsPoint(xc, yc))
+    pt1 = xform.transform(QgsPointXY(x1, y1))
+    pt2 = xform.transform(QgsPointXY(x2, y2))
+    pt3 = xform.transform(QgsPointXY(x3, y3))
+    pt4 = xform.transform(QgsPointXY(x4, y4))
+    pt5 = xform.transform(QgsPointXY(xc, yc))
 
     xc = pt5.x()
     yc = pt5.y()
@@ -1219,8 +1219,8 @@ def GDX_Publisher2(self, kml):
             crsDest2 = QgsCoordinateReferenceSystem(layer.crs())
             xform2   = QgsCoordinateTransform(crs2, crsDest2)
 
-            pt0 = xform2.transform(QgsPoint(xMin, yMin))
-            pt1 = xform2.transform(QgsPoint(xMax, yMax))
+            pt0 = xform2.transform(QgsPointXY(xMin, yMin))
+            pt1 = xform2.transform(QgsPointXY(xMax, yMax))
             rect = QgsRectangle(pt0, pt1)
             rq = QgsFeatureRequest(rect)
             iter = layer.getFeatures(rq)
@@ -1235,7 +1235,7 @@ def GDX_Publisher2(self, kml):
                     x1 = elem.x()
                     y1 = elem.y()
 
-                    pt1 = xform.transform(QgsPoint(x1, y1))
+                    pt1 = xform.transform(QgsPointXY(x1, y1))
 
                     kml = kml +  (' <Placemark>\n')
 
@@ -1292,7 +1292,7 @@ def GDX_Publisher2(self, kml):
                     elem = geom.asPolyline()
                     for p1 in elem:
                         x1,y1 = p1.x(),p1.y()
-                        pt1 = xform.transform(QgsPoint(x1, y1))
+                        pt1 = xform.transform(QgsPointXY(x1, y1))
                         stringazza =   ('%.7lf,%.7lf \n') % (pt1.x(), pt1.y())
                         kml = kml +  (stringazza)
                     kml = kml +  ('                 </coordinates>\n')
@@ -1359,7 +1359,7 @@ def GDX_Publisher2(self, kml):
                             if geom.isMultipart():
                                 pt1 = xform.transform(x1)
                             else:
-                                pt1 = xform.transform(QgsPoint(x1, y1))
+                                pt1 = xform.transform(QgsPointXY(x1, y1))
 
                             stringazza =   ('%.7lf,%.7lf,0 \n') % (pt1.x(), pt1.y())
                             kml = kml +  (stringazza)
