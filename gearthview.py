@@ -553,7 +553,7 @@ def GDX_Publisher(self):
     kml = codecs.open(out_folder + '/doc.kml', 'w', encoding='utf-8')#
 
     canvasMapSettings = mapCanvas.mapSettings()
-    mapRect = canvasMapSettings.extent()
+    mapRect = mapCanvas.extent()
     width = canvasMapSettings.outputSize().width()
     height = canvasMapSettings.outputSize().height()
     srs = canvasMapSettings.destinationCrs()
