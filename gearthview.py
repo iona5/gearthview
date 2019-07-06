@@ -552,44 +552,32 @@ def GDX_Publisher(self):
     out_folder = webserverDir
     kml = codecs.open(out_folder + '/doc.kml', 'w', encoding='utf-8')#
 
-    mapRenderer = mapCanvas.mapSettings()
-    mapRect = mapRenderer.extent()
-    
-    width = mapRenderer.outputSize().width()
-    height = mapRenderer.outputSize().height()
-    srs = mapRenderer.destinationCrs()
+    canvasMapSettings = mapCanvas.mapSettings()
+    mapRect = canvasMapSettings.extent()
+    width = canvasMapSettings.outputSize().width()
+    height = canvasMapSettings.outputSize().height()
+    srs = canvasMapSettings.destinationCrs()
 
-    mapSettings = QgsMapSettings()
-    mapSettings.setExtent(mapRect)
+    renderMapSettings = QgsMapSettings()
+    renderMapSettings.setExtent(mapRect)
     DPI = 300
-    mapSettings.setOutputDpi(DPI)
+    renderMapSettings.setOutputDpi(DPI)
 
-    mapSettings.setOutputSize(QSize(width, height))
+    renderMapSettings.setOutputSize(QSize(width, height))
 
-    mapSettings.setLayers(qgisProject.layerTreeRoot().checkedLayers())
-
-    mapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
-    image = QImage(QSize(width, height), QImage.Format_RGB32)
-
-    image.fill(0)
-
-    image.setDotsPerMeterX(DPI / 25.4 * 1000)
-    image.setDotsPerMeterY(DPI / 25.4 * 1000)
-    p = QPainter()
-    p.begin(image)
-    mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
-    mapRenderer.start()
-    mapRenderer.waitForFinished()
-    p.end()
+    renderMapSettings.setLayers(qgisProject.layerTreeRoot().checkedLayers())
+    renderMapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
 
     xN = mapRect.xMinimum()
     yN = mapRect.yMinimum()
-
     nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
-    input_file = out_folder + "/" + nomePNG + ".png"
+    outputFile = out_folder + "/" + nomePNG + ".png"
 
-    #Save the image
-    image.save(input_file, "png")
+    imageRenderer = QgsMapRendererParallelJob(renderMapSettings)
+    imageRenderer.start()
+    imageRenderer.waitForFinished()
+    image = imageRenderer.renderedImage()
+    image.save(outputFile, "png")
 
     layer = mapCanvas.currentLayer()
     crsSrc = srs
@@ -1054,25 +1042,23 @@ def GDX_Publisher2(self, kml):
 # ------------------------------------------------------------------
 
 
-    mapRenderer = mapCanvas.mapSettings()
-    mapRect = mapRenderer.extent()
-    width = mapRenderer.width()
-    height = mapRenderer.height()
-    srs = mapRenderer.destinationCrs()
-
-    # create output image and initialize it
-    image = QImage(QSize(width, height), QImage.Format_ARGB32)
-    image.fill(0)
-
-    #adjust map canvas (renderer) to the image size and render
-    imagePainter = QPainter(image)
+    canvasMapSettings = mapCanvas.mapSettings()
+    mapRect = canvasMapSettings.extent()
+    width = canvasMapSettings.outputSize().width()
+    height = canvasMapSettings.outputSize().height()
+    srs = canvasMapSettings.destinationCrs()
 
     zoom = 1
-    target_dpi = int(round(zoom * mapRenderer.outputDpi()))
+    target_dpi = int(round(zoom * canvasMapSettings.outputDpi()))
+    canvasMapSettings.setOutputSize(QSize(width, height), target_dpi)
+    
+    # create output image and initialize it
+    image = QImage(QSize(width, height), QImage.Format_ARGB32)
 
-    mapRenderer.setOutputSize(QSize(width, height), target_dpi)
+    image.fill(0)
 
-    mapRenderer.render(imagePainter)
+    imagePainter = QPainter(image)
+    canvasMapSettings.render(imagePainter)
     imagePainter.end()
 
     xN = mapRect.xMinimum()
