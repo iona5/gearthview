@@ -1391,24 +1391,20 @@ class gearthview:
         self.aboutAction.triggered.connect(self.about)
 
 
-        self.toolBar = self.iface.mainWindow().findChild(QObject, 'Geodrinx')
-        if not self.toolBar :
-            self.toolBar = self.iface.addToolBar("Geodrinx")
-            self.toolBar.setObjectName("Geodrinx")
-
         self.GECombo = QMenu(self.iface.mainWindow())
+        self.GECombo.setToolTip("GEarthView")
         self.GECombo.addAction(self.action)
         self.GECombo.addAction(self.PasteFromGEaction)
 #        self.GECombo.addAction(self.QGEarthAction)
         self.GECombo.addAction(self.aboutAction)
 
-        self.toolButton = QToolButton()
-        self.toolButton.setMenu( self.GECombo )
-        self.toolButton.setDefaultAction( self.action )
-        self.toolButton.setPopupMode( QToolButton.InstantPopup )
+        toolButton = QToolButton()
+        toolButton.setMenu( self.GECombo )
+        toolButton.setDefaultAction( self.action )
+        toolButton.setPopupMode( QToolButton.InstantPopup )
 
-        self.toolBar.addWidget(self.toolButton)
-        self.GECombo.setToolTip("GEarthView")
+        self.toolBar = self.iface.pluginToolBar()
+        self.toolbarAction = self.toolBar.addWidget(toolButton)
 
         self.iface.addPluginToWebMenu(u"&GEarthView", self.action)
         self.iface.addPluginToWebMenu(u"GEarthView", self.PasteFromGEaction)
@@ -1422,9 +1418,9 @@ class gearthview:
         self.iface.removePluginWebMenu(u"&GEarthView", self.PasteFromGEaction)
         self.iface.removePluginWebMenu(u"&GEarthView", self.aboutAction)
 
-        self.toolBar.removeAction(self.action)
-        if not self.toolBar.actions() :
-            del self.toolBar
+        self.toolBar.removeAction(self.toolbarAction)
+        del self.toolbarAction
+        del self.GECombo
 
 
     def PasteFromGE(self):
