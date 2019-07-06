@@ -3,4 +3,5 @@ zope https://pypi.python.org/pypi/zope.interface/4.6.0
 attr https://pypi.python.org/pypi/attrs/19.1.0
 constantly https://pypi.python.org/pypi/constantly/15.1.0
 incremental https://pypi.python.org/pypi/incremental/17.5.0
+hyperlink https://pypi.python.org/pypi/constantly/19.0.0
 
