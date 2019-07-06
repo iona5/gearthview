@@ -559,11 +559,7 @@ def GDX_Publisher(self):
     height = mapRenderer.outputSize().height()
     srs = mapRenderer.destinationCrs()
 
-    xN = mapRect.xMinimum()
-    yN = mapRect.yMinimum()
-
     mapSettings = QgsMapSettings()
-    mapSettings.setMapUnits(0)
     mapSettings.setExtent(mapRect)
     DPI = 300
     mapSettings.setOutputDpi(DPI)
@@ -585,6 +581,9 @@ def GDX_Publisher(self):
     mapRenderer.start()
     mapRenderer.waitForFinished()
     p.end()
+
+    xN = mapRect.xMinimum()
+    yN = mapRect.yMinimum()
 
     nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
     input_file = out_folder + "/" + nomePNG + ".png"
@@ -1423,7 +1422,7 @@ class gearthview:
         self.action = QAction(QIcon(self.plugin_dir + "/iconG.png"),QCoreApplication.translate(u"GEarthView", "GEarthView"), self.iface.mainWindow())
         self.action.triggered.connect(self.run)
 
-        self.PasteFromGEaction = QAction(QIcon(self.plugin_dir + "/iconQG.png"),QCoreApplication.translate(u"GEarthView", "PasteFromGE"), self.iface.mainWindow())
+        self.PasteFromGEaction = QAction(QIcon(self.plugin_dir + "/iconP.png"),QCoreApplication.translate(u"GEarthView", "PasteFromGE"), self.iface.mainWindow())
         self.PasteFromGEaction.triggered.connect(self.PasteFromGE)
 
 #        self.QGEarthAction= QAction(QIcon(self.plugin_dir + "/iconQG.png"), QCoreApplication.translate(u"&GEarthView", "PointFromGE"), self.iface.mainWindow())
