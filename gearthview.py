@@ -565,13 +565,7 @@ def GDX_Publisher(self):
 
     mapSettings.setOutputSize(QSize(width, height))
 
-    lst = []
-    layerTreeRoot = qgisProject.layerTreeRoot()
-    for id in layerTreeRoot.findLayerIds():
-        node = layerTreeRoot.findLayer(id)
-        lst.append(id)
-
-    mapSettings.setLayers(lst)
+    mapSettings.setLayers(qgisProject.layerTreeRoot().checkedLayers())
 
     mapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
     image = QImage(QSize(width, height), QImage.Format_RGB32)
