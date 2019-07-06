@@ -874,7 +874,7 @@ def GDX_Publisher(self):
                     fff = feat.fields()
                     num = fff.count()
                     iii = -1
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
                         kml.write (stringazza)
@@ -913,7 +913,7 @@ def GDX_Publisher(self):
                     fff = feat.fields()
                     num = fff.count()
                     iii = -1
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
                         kml.write (stringazza)
@@ -956,7 +956,7 @@ def GDX_Publisher(self):
                     iii = -1
                     height = ',0 '
                     extrusion = '<Polygon>'
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
 
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
@@ -1250,7 +1250,7 @@ def GDX_Publisher2(self, kml):
                     fff = feat.fields()
                     num = fff.count()
                     iii = -1
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
                         kml = kml +  (stringazza)
@@ -1278,7 +1278,7 @@ def GDX_Publisher2(self, kml):
                     fff = feat.fields()
                     num = fff.count()
                     iii = -1
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
                         kml = kml +  (stringazza)
@@ -1316,7 +1316,7 @@ def GDX_Publisher2(self, kml):
                     fff = feat.fields()
                     num = fff.count()
                     iii = -1
-                    for f in layer.pendingFields():
+                    for f in layer.fields():
                         iii = iii + 1
                         stringazza = ('<tr><td>%s</td><td>%s</td></tr>\n') %(f.name(),feat[iii])
                         kml = kml +  (stringazza)
