@@ -554,16 +554,21 @@ def GDX_Publisher(self):
 
     canvasMapSettings = mapCanvas.mapSettings()
     mapRect = mapCanvas.extent()
-    width = canvasMapSettings.outputSize().width()
-    height = canvasMapSettings.outputSize().height()
+
     srs = canvasMapSettings.destinationCrs()
+    crsDest = QgsCoordinateReferenceSystem(4326)  # Wgs84LLH
+    xform = QgsCoordinateTransform(srs, crsDest, qgisProject)
 
     renderMapSettings = QgsMapSettings()
-    renderMapSettings.setExtent(mapRect)
+    renderRect = xform.transformBoundingBox(mapRect)
+    renderMapSettings.setExtent(renderRect)
+    renderMapSettings.setDestinationCrs(crsDest)
     DPI = 300
     renderMapSettings.setOutputDpi(DPI)
 
-    renderMapSettings.setOutputSize(QSize(width, height))
+    renderWidth = canvasMapSettings.outputSize().width()
+    renderHeight = renderWidth * renderRect.height()/renderRect.width()
+    renderMapSettings.setOutputSize(QSize(renderWidth, renderHeight))
 
     renderMapSettings.setLayers(qgisProject.layerTreeRoot().checkedLayers())
     renderMapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
