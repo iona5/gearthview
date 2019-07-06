@@ -764,14 +764,7 @@ def GDX_Publisher(self):
     yScale = (mapRect.yMaximum() - mapRect.yMinimum()) /  image.height()
 
     f = open(out_folder + "/" + nomePNG     + ".pngw", 'w')
-    f.write(str(xScale) + '\n')
-    f.write(str(0) + '\n')
-    f.write(str(0) + '\n')
-    f.write('-' + str(yScale) + '\n')
-    f.write(str(mapRect.xMinimum()) + '\n')
-    f.write(str(mapRect.yMaximum()) + '\n')
-    f.write(str(mapRect.xMaximum()) + '\n')
-    f.write(str(mapRect.yMinimum()))
+    f.write(QgsMapSettingsUtils.worldFileContent(renderMapSettings))
     f.close()
 
 
