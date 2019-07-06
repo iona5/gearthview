@@ -35,8 +35,8 @@ http://localhost:5558/cesium/Apps/CesiumViewer
  ***************************************************************************/
 """
 # Import the PyQt and QGIS libraries
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
 from qgis.core import *
 from qgis.gui import *
 import qgis
@@ -1419,16 +1419,16 @@ class gearthview:
 
     def initGui(self):
         self.action = QAction(QIcon(self.plugin_dir + "/iconG.png"),QCoreApplication.translate(u"GEarthView", "GEarthView"), self.iface.mainWindow())
-        QObject.connect(self.action, SIGNAL("triggered()"), self.run)
+        self.action.triggered.connect(self.run)
 
         self.PasteFromGEaction = QAction(QIcon(self.plugin_dir + "/iconQG.png"),QCoreApplication.translate(u"GEarthView", "PasteFromGE"), self.iface.mainWindow())
-        QObject.connect(self.PasteFromGEaction, SIGNAL("triggered()"), self.PasteFromGE)
+        self.PasteFromGEaction.triggered.connect(self.PasteFromGE)
 
 #        self.QGEarthAction= QAction(QIcon(self.plugin_dir + "/iconQG.png"), QCoreApplication.translate(u"&GEarthView", "PointFromGE"), self.iface.mainWindow())
 #        QObject.connect(self.QGEarthAction, SIGNAL("triggered()"), self.QGEarth)
 
         self.aboutAction= QAction(QIcon(self.plugin_dir + "/iconA.png"), QCoreApplication.translate(u"&GEarthView", "About"), self.iface.mainWindow())
-        QObject.connect(self.aboutAction, SIGNAL("triggered()"), self.about)
+        self.aboutAction.triggered.connect(self.about)
 
 
         self.toolBar = self.iface.mainWindow().findChild(QObject, 'Geodrinx')
