@@ -57,9 +57,11 @@ from gearthview.gearthviewdialog import gearthviewDialog
 
 ### important
 import qt5reactor.qt5reactor as qt5reactor
+from twisted.internet.error import ReactorAlreadyInstalledError,\
+    CannotListenError
 try:
     qt5reactor.install()
-except qt5reactor.ReactorAlreadyInstalledError:
+except ReactorAlreadyInstalledError:
     print("still installed, doing nothing")
 except AttributeError:
     pass
@@ -443,8 +445,11 @@ def startGeoDrink_Server(self):
         cesiumDir = webserverDir + "cesium/"
         root.putChild("cesium", File(cesiumDir))
 
-        reactor.listenTCP(5558, server.Site(root))
-        reactor.run()
+        try:
+            reactor.listenTCP(5558, server.Site(root))
+            reactor.run()
+        except CannotListenError:
+            print ("error during starting listening server, probably already running")
 
 
 
