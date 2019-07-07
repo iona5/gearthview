@@ -112,7 +112,7 @@ def P3dPoints_Write(self, adesso):
     nomeGML = ("/GEKml_3dPoints.csv")
 
 
-        #  Apro il file WKT in scrittura
+    #  Apro il file WKT in scrittura
 
     kml=open(out_folder + nomeGML, 'w')
 
@@ -131,7 +131,7 @@ def P3dPoints_Write(self, adesso):
 #--------------------------------------------------------
             if (adesso == "GEKml_Polygons"):
 
-#                                     print "CREO UN MEMORY LAYER DI POLIGONI"
+#               print "CREO UN MEMORY LAYER DI POLIGONI"
 
                 geomType = ("Polygon" + '?crs=%s') %(crs.authid())
                 DronePlan = "GEKml_Extrusions"
@@ -157,24 +157,24 @@ def P3dPoints_Write(self, adesso):
 
                 Name = feat.attributes()[idx]
 
-#                                     print Name
+#               print Name
 
                 testoWKT = geom.exportToWkt() + "\n"
 
-#                                     print testoWKT
+#               print testoWKT
 
                 istr = testoWKT.split(' ')
                 Z = str(istr[3])
                 Z = Z.replace(',','')
                 istruz = str(num) + "," + Name + "," + str(istr[0])
 
-#                                     print istruz
+#               print istruz
 
 
 
                 if (str(istr[0]) == "PolygonZ" and adesso == "GEKml_Polygons"):
 
-#                                        print "---scrivo un elemento poligono"
+#               print "---scrivo un elemento poligono"
 
                     feature = QgsFeature()
 
@@ -187,11 +187,11 @@ def P3dPoints_Write(self, adesso):
 #  RoofType;    // 0 = flat, 1 = shed, 2 = gable, 3 = hip
 # h ttp://wiki.openstreetmap.org/wiki/OSM-4D/Roof_table
 
-#                                        RoofType = Name
+#                   RoofType = Name
 
-#                                        if (height == 0 and Z > 0):
+#                   if (height == 0 and Z > 0):
                     if (float(Z) > 0):
-#                                           print Z
+#                   print Z
                         height = float(Z)
 
                     values = [(ID), (height), (baseZ), (Name)]
@@ -275,18 +275,18 @@ def startGeoDrink_Server(self):
 
     from twisted.web.resource import Resource
 
-#                               from twisted.web.twcgi import CGIScript
+#   from twisted.web.twcgi import CGIScript
 
-#                               resource = CGIScript(webServerDir)
+#   resource = CGIScript(webServerDir)
 
-#                               if platform.system() == "Windows":
-#                                       os.startfile(webServerDir + 'QGIS_link.kmz')
+#   if platform.system() == "Windows":
+#       os.startfile(webServerDir + 'QGIS_link.kmz')
 
-#                               if platform.system() == "Darwin":
-#                                       os.system("open " + str(webServerDir + 'QGIS_link.kmz'))
+#   if platform.system() == "Darwin":
+#       os.system("open " + str(webServerDir + 'QGIS_link.kmz'))
 
-#                               if platform.system() == "Linux":
-#                                       os.system("xdg-open " + str(webServerDir + 'QGIS_link.kmz'))
+#   if platform.system() == "Linux":
+#       os.system("xdg-open " + str(webServerDir + 'QGIS_link.kmz'))
 
     GDX_Publisher(self)
 
@@ -301,8 +301,8 @@ def startGeoDrink_Server(self):
             def __init__(self, iface, pluginDir):
                 self.iface = iface
                 self.pluginDir = pluginDir
-#                                             site.addsitedir(os.path.abspath(os.path.dirname(pluginDir) + '/ext-libs'))
-#                                             print os.path.abspath(os.path.dirname(pluginDir))
+#               site.addsitedir(os.path.abspath(os.path.dirname(pluginDir) + '/ext-libs'))
+#               print os.path.abspath(os.path.dirname(pluginDir))
 
             def render_GET(self, request):
 
@@ -310,7 +310,7 @@ def startGeoDrink_Server(self):
                 global Zeta
                 global description
 
-#------                                       newdata = request.content.getvalue()
+#------         newdata = request.content.getvalue()
                 print request
 
 #<GET /form?BBOX=16.3013171267662,38.63325421913416,16.62443680433362,38.86443091553171 HTTP/1.1>
@@ -347,7 +347,7 @@ def startGeoDrink_Server(self):
                 if(pony == '3'):
 
                     kml = GDX_Publisher2(self, kml)
-#                                                print kml
+#                   print kml
                     return str(kml)
 
                 param2 = params[2].replace('LookatTerrain=','')
@@ -365,11 +365,11 @@ def startGeoDrink_Server(self):
                 lookatTilt = float(CAMERA[3])
                 lookatHeading = float(CAMERA[4])
 
-#                                             print("lookatLon %f")  %(lookatLon)
-#                                             print("lookatLat %f")  %(lookatLat)
-#                                             print("lookatRange %f")  %(lookatRange)
-#                                             print("lookatTilt %f")  %(lookatTilt)
-#                                             print("lookatHeading %f")  %(lookatHeading)
+#               print("lookatLon %f")  %(lookatLon)
+#               print("lookatLat %f")  %(lookatLat)
+#               print("lookatRange %f")  %(lookatRange)
+#               print("lookatTilt %f")  %(lookatTilt)
+#               print("lookatHeading %f")  %(lookatHeading)
 
                 west  = float(bbox[0])
                 south = float(bbox[1])
@@ -380,14 +380,14 @@ def startGeoDrink_Server(self):
                 lat = float(LookatTerrain[1])
                 Zeta = float(LookatTerrain[2])
 
-#                                             print ("Zeta = %f") %(Zeta)
+#               print ("Zeta = %f") %(Zeta)
 
-#                                             msg = ("LonLatH = %s, %s    elev = %s m      alt =  %s m") %(lon,lat,Zeta, lookatRange)
+#               msg = ("LonLatH = %s, %s    elev = %s m      alt =  %s m") %(lon,lat,Zeta, lookatRange)
                 msg = ("LonLatH = %.7lf, %.7lf   elev = %s m     alt =  %s m") %(float(lon),float(lat),Zeta, lookatRange)
                 self.iface.mainWindow().statusBar().showMessage(msg)
 
-#                                             lon = ((east - west) / 2) + west
-#                                             lat = ((north - south) / 2) + south
+#               lon = ((east - west) / 2) + west
+#               lat = ((north - south) / 2) + south
 
 
                 if(pony != '0'):
@@ -405,11 +405,11 @@ def startGeoDrink_Server(self):
 
                     w3wUrl = ('<a href="https://map.what3words.com/%.7f,%.7f">w3w</a><br>') %(lat,lon)
 
-#                                                w3wUrl = ('<a href="http://w3w.co/%.7f,%.7f" target="_blank"><img width="300" height="100" alt="what3words" src="http://developer.what3words.com/wp-content/uploads/2014/12/w3w_logo_final.png" style="max-height: 44px;"></a><br>') %(lat,lon)
+#                   w3wUrl = ('<a href="http://w3w.co/%.7f,%.7f" target="_blank"><img width="300" height="100" alt="what3words" src="http://developer.what3words.com/wp-content/uploads/2014/12/w3w_logo_final.png" style="max-height: 44px;"></a><br>') %(lat,lon)
 
 # h ttp://map.project-osrm.org/?z=17&center=41.210709%2C13.569338&loc=41.210602%2C13.568467&hl=en&alt=0
-#                                                osrmUrl = ('<a href="http://map.project-osrm.org/?z=17&center=%.7f%2C%.7f">W3W</a><br>') %(lat,lon)
-#                                                descript  = ('<html>lat  long  H<br><br>%.7f,%.7f,%.2f<br><br><table border=1 style="border-collapse:collapse; border-color:#000000;"cellpadding=0 cellspacing=0  width=250 style="FONT-SIZE: 11px; FONT-FAMILY: Verdana, Arial, Helvetica, sans-serif;"><tr><td bgcolor="#E3E1CA" align="right"><font COLOR="#FF0000"><b>CODE</b></font></td><td bgcolor="#E4E6CA"> <font COLOR="#008000">')  %(lat,lon,Zeta)
+#                   osrmUrl = ('<a href="http://map.project-osrm.org/?z=17&center=%.7f%2C%.7f">W3W</a><br>') %(lat,lon)
+#                   descript  = ('<html>lat  long  H<br><br>%.7f,%.7f,%.2f<br><br><table border=1 style="border-collapse:collapse; border-color:#000000;"cellpadding=0 cellspacing=0  width=250 style="FONT-SIZE: 11px; FONT-FAMILY: Verdana, Arial, Helvetica, sans-serif;"><tr><td bgcolor="#E3E1CA" align="right"><font COLOR="#FF0000"><b>CODE</b></font></td><td bgcolor="#E4E6CA"> <font COLOR="#008000">')  %(lat,lon,Zeta)
 
 
 # h ttps://citymapper.com/roma/?start=41.901082099999996,12.501135900000008&saddr=Start%20Location&end=41.21271077541033,13.567997962236404&eaddr=End%20Location
@@ -439,8 +439,8 @@ def startGeoDrink_Server(self):
 ' </Placemark>\n') %( lon, lat, Zeta )
 
 
-                          # Tag close KML ----
-#                                             kml = kml + ('</kml>')
+                    # Tag close KML ----
+#                   kml = kml + ('</kml>')
 
 
 
@@ -460,7 +460,7 @@ def startGeoDrink_Server(self):
 
                 # Calculate QgisViewBox from 3D geoCoords
 
-#                                             print ("raggio = %f") %(raggio)
+#               print ("raggio = %f") %(raggio)
 
                 ilMetroGeo = 0.000011922282515
 
@@ -497,10 +497,10 @@ def startGeoDrink_Server(self):
                     QGEarth_addPoint(self)
 
 
-#                                             print  'Content-Type: application/vnd.google-earth.kml+xml\n'
+#               print  'Content-Type: application/vnd.google-earth.kml+xml\n'
 
-#                                             kml_2 = GDX_Publisher2(self, kml)
-#                                             kml = kml + kml_2
+#               kml_2 = GDX_Publisher2(self, kml)
+#               kml = kml + kml_2
 
                 kml = kml + ('</kml>')
 
@@ -565,7 +565,7 @@ def startGeoDrink_Server(self):
 
                 # Calculate QgisViewBox from 3D geoCoords
 
-#                                             print ("raggio = %f") %(raggio)
+#               print ("raggio = %f") %(raggio)
 
                 ilMetroGeo = 0.000011922282515
 
@@ -613,7 +613,7 @@ def startGeoDrink_Server(self):
 def QGEarth_addPoint(self):
 
     if ( serverStarted == 0) :
-#                                               QMessageBox.critical(self.iface.mainWindow(), "You need to startQrCoding, before !!!", "")
+#       QMessageBox.critical(self.iface.mainWindow(), "You need to startQrCoding, before !!!", "")
         self.iface.messageBar().pushMessage("WARNING", "You need to startQrCoding, before !!!", level=QgsMessageBar.WARNING, duration=3)
         print ("You need to startQrCoding, before !!!\n")
         return
@@ -622,7 +622,7 @@ def QGEarth_addPoint(self):
     global Zeta
     global description
 
-#                               print ("QGEarth %f %f") %(lat, lon)
+#   print ("QGEarth %f %f") %(lat, lon)
 
     canvas = self.iface.mapCanvas()
     layer = canvas.currentLayer()
@@ -634,7 +634,7 @@ def QGEarth_addPoint(self):
             Edit = layer.isEditable()
 
             if ( Edit == 0 ):
-#                                      QMessageBox.critical(self.iface.mainWindow(), "WARNING: Layer not editable", str(layer.name()))
+#               QMessageBox.critical(self.iface.mainWindow(), "WARNING: Layer not editable", str(layer.name()))
                 self.iface.messageBar().pushMessage("WARNING", "Layer not editable", level=QgsMessageBar.WARNING, duration=3)
 
                 return
@@ -647,12 +647,12 @@ def QGEarth_addPoint(self):
 
             gPnt = QgsGeometry.fromPoint(QgsPoint(pt.x(),pt.y()))
 
-#                                   print ("QGEarth %f %f %f %f") %(lat, lon, pt.x(), pt.y())
+#            print ("QGEarth %f %f %f %f") %(lat, lon, pt.x(), pt.y())
 
             feature = QgsFeature()
             feature.setGeometry( gPnt )
 
-#                                   print ("description = <%s>") %(description)
+#            print ("description = <%s>") %(description)
 
             feature.initAttributes(5)
 
@@ -666,7 +666,7 @@ def QGEarth_addPoint(self):
             lat_ = float(lat)
             lon_ = float(lon)
 
-#                                   print feature.id()
+#           print feature.id()
 
             name = ("%.7f,%.7f,%s") %(lat_, lon_, Zeta)
 
@@ -680,7 +680,7 @@ def QGEarth_addPoint(self):
 
             layer.updateExtents()
 
-#                                   layer.commitChanges()
+#           layer.commitChanges()
 
             canvas.refresh()
 
@@ -702,7 +702,7 @@ def QGEarth_addPoint(self):
 
 def GDX_Publisher(self):
 
-#                               print "GDX_Publisher -------------------------------\n"
+#   print "GDX_Publisher -------------------------------\n"
 
     mapCanvas = self.iface.mapCanvas()
 
@@ -713,15 +713,15 @@ def GDX_Publisher(self):
     adesso = adesso.replace(":","_")
     adesso = adesso.replace(".","_")
 
-#                               print "adesso: <%s>\n" %(adesso)
+#   print "adesso: <%s>\n" %(adesso)
 
 # Prendo le coordinate della finestra attuale---------------------------------------
 # 13.5702225179249876,41.2134192420407501 : 13.5768356834183166,41.2182110366311107
     text = mapCanvas.extent().toString()
     text1 = text.replace("," , " ")
     text2 = text1.replace(" : ", ",")
-#                               the_filter = "bbox($geometry, geomFromWKT ( 'LINESTRING(" + text2 + ")'))"
-#                               self.doPaste(the_filter)
+#   the_filter = "bbox($geometry, geomFromWKT ( 'LINESTRING(" + text2 + ")'))"
+#   self.doPaste(the_filter)
 
 # HERE IT DELETES THE OLD IMAGE ------------------------------------
 # (if you comment these, images still remain ...  :)
@@ -737,7 +737,7 @@ def GDX_Publisher(self):
     out_folder = tumpdir
 
     kml = codecs.open(out_folder + '/doc.kml', 'w', encoding='utf-8')
-#                               kml=open(out_folder + '/doc.kml', 'w')
+#   kml=open(out_folder + '/doc.kml', 'w')
     #
 
     iface = qgis.utils.iface
@@ -764,7 +764,7 @@ def GDX_Publisher(self):
 #  OLD version ----------------------------------------------------------
 
 #  NEW version (not working) --------------------------------------------
-#                                  image = QImage(QPixmap.grabWidget(self.iface.mapCanvas()))
+#       image = QImage(QPixmap.grabWidget(self.iface.mapCanvas()))
 #  NEW version (not working) --------------------------------------------
 
         xN = mapRect.xMinimum()
@@ -879,15 +879,15 @@ def GDX_Publisher(self):
     kml.write('    <Document>\n')
     kml.write('      <name>QGisView</name>\n')
     kml.write('      <Snippet maxLines="0"></Snippet>\n')
-#                               loc = ("         <description><![CDATA[http://map.project-osrm.org/?loc=%.7lf,%.7lf&ly=1784084387]]></description>\n") %(yc, xc)
-#                               loc = ("         <description><![CDATA[http://map.project-osrm.org/?z=16&center=%.7lf,%.7lf&loc=&loc=&hl=en&ly=&alt=&df=&srv=]]></description>\n") %(yc, xc)
+#   loc = ("         <description><![CDATA[http://map.project-osrm.org/?loc=%.7lf,%.7lf&ly=1784084387]]></description>\n") %(yc, xc)
+#   loc = ("         <description><![CDATA[http://map.project-osrm.org/?z=16&center=%.7lf,%.7lf&loc=&loc=&hl=en&ly=&alt=&df=&srv=]]></description>\n") %(yc, xc)
     loc = ("         <description><![CDATA[https://map.what3words.com/%.7lf,%.7lf]]></description>\n") %(yc, xc)
 
     kml.write(loc)
 #
 
 
-#                               kml.write('      <description>http://map.project-osrm.org/?hl=it&loc=45.989486,12.778154&loc=45.985624,12.781076&z=16&center=45.984058,12.774417&alt=0&df=0&re=0&ly=-940622518</description>\n')
+#   kml.write('      <description>http://map.project-osrm.org/?hl=it&loc=45.989486,12.778154&loc=45.985624,12.781076&z=16&center=45.984058,12.774417&alt=0&df=0&re=0&ly=-940622518</description>\n')
 
     kml.write('          <open>1</open>\n')
 
@@ -1034,7 +1034,7 @@ def GDX_Publisher(self):
 
     kml.write('     <Icon>\n')
 
-#                               nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
+#   nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
     stringazza = ("         <href>%s.png</href>\n") % (nomePNG)
     kml.write(stringazza)
     kml.write('             <viewBoundScale>1.0</viewBoundScale>\n')
@@ -1049,10 +1049,10 @@ def GDX_Publisher(self):
     kml.write('     </gx:LatLonQuad>\n')
     kml.write('    </GroundOverlay>\n')
 
-#                               #Write kml footer
-#                               kml.write('</kml>\n')
-#                               #Close kml file
-#                               kml.close()
+#   #Write kml footer
+#   kml.write('</kml>\n')
+#   #Close kml file
+#   kml.close()
 
 
 
@@ -1076,8 +1076,8 @@ def GDX_Publisher(self):
     nomeLay = "gearthview"   # foo default name
 
 
-#  Adesso scrivo il vettoriale
-#  Prendo il sistema di riferimento del Layer selezionato ------------------
+#   Adesso scrivo il vettoriale
+#   Prendo il sistema di riferimento del Layer selezionato ------------------
 
 
     layer = mapCanvas.currentLayer()
@@ -1134,26 +1134,26 @@ def GDX_Publisher(self):
                 nele = feat.id()
 
 # Prendo il contenuto dei campi -------------
-#                                     fff = feat.fields()
-#                                     num = fff.count()
-#                                     for iii in range(num):
-#                                        print "%s " %(feat[iii])
+#               fff = feat.fields()
+#               num = fff.count()
+#               for iii in range(num):
+#               print "%s " %(feat[iii])
 # -------------------------------------------
 
 # NathanW example code-----------------------------
-#                                     for feature in layer.getFeatures():
-#                                        for attr in feature:
-#                                           print attr
+#               for feature in layer.getFeatures():
+#                   for attr in feature:
+#                       print attr
 #
-#                                     for f in layer.pendingFields():
-#                                        print f.name()
+#               for f in layer.pendingFields():
+#                   print f.name()
 #-------------------------------------------------
 
                 # fetch geometry
                 geom = feat.geometry()
             # show some information about the feature
 
-#                                     print ("GeomType: %d") %(geom.type())
+#               print ("GeomType: %d") %(geom.type())
 
 #  For MultiPoint    http://gis.stackexchange.com/questions/55067/how-to-convert-multipoint-layer-to-point
 
@@ -1200,10 +1200,10 @@ def GDX_Publisher(self):
 #  VECCHIO METODO------------------------------------------------------------
 
 #  NUOVO METODO------------------------------------------------------------
-#                                       testo = geom.exportToWkt()
-#                                       geometra = ogr.CreateGeometryFromWkt(testo)
-#                                       testoKML = geometra.ExportToKML()
-#                                       kml.write (testoKML)
+#                   testo = geom.exportToWkt()
+#                   geometra = ogr.CreateGeometryFromWkt(testo)
+#                   testoKML = geometra.ExportToKML()
+#                   kml.write (testoKML)
 #  NUOVO METODO------------------------------------------------------------
 
                     kml.write ('    </Placemark>\n')
@@ -1266,7 +1266,7 @@ def GDX_Publisher(self):
                     transform = osr.CoordinateTransformation(source, target)
 
                     testo = geom.exportToWkt()
-#                                       print testo
+#                   print testo
                     testo = testo.replace("LineStringZ (", "LineString (")
                     testo = testo.replace(" 0,", ",")
                     testo = testo.replace(" 0)", ")")
@@ -1320,65 +1320,65 @@ def GDX_Publisher(self):
 
 
 #  VECCHIO METODO------------------------------------------------------------
-#                                       kml.write ('            <Polygon>\n')
-#                                       kml.write ('                    <tessellate>1</tessellate>\n')
-#                                       kml.write ('     <outerBoundaryIs>\n')
-#                                       kml.write ('        <LinearRing>\n')
-#                                       kml.write ('         <coordinates>\n')
+#                   kml.write ('            <Polygon>\n')
+#                   kml.write ('                    <tessellate>1</tessellate>\n')
+#                   kml.write ('     <outerBoundaryIs>\n')
+#                   kml.write ('        <LinearRing>\n')
+#                   kml.write ('         <coordinates>\n')
 
-#                                       elem = geom.asPolygon()
+#                   elem = geom.asPolygon()
 
 # http://qgis.spatialthoughts.com/2012/11/tip-count-number-of-vertices-in-layer.html
-#                                       if geom.isMultipart():
-#                                         print "MULTIPART !!!"
-#                                         elem = geom.asMultiPolygon()
+#                   if geom.isMultipart():
+#                       print "MULTIPART !!!"
+#                       elem = geom.asMultiPolygon()
 
-##                                        for polygon in elem:
-##                                           for ring in polygon:
-##                                              print ("Pezzo con %d vertici") %(len(ring))
+##                      for polygon in elem:
+##                          for ring in polygon:
+##                              print ("Pezzo con %d vertici") %(len(ring))
 
 
-#                                       for iii in range (len(elem)):
+#                   for iii in range (len(elem)):
 
-#                                         if (iii == 1):
-#                                           kml.write ('         </coordinates>\n')
-#                                           kml.write ('         </LinearRing>\n')
-#                                           kml.write ('         </outerBoundaryIs>\n')
-#                                           kml.write ('         <innerBoundaryIs>\n')
-#                                           kml.write ('         <LinearRing>\n')
-#                                           kml.write ('         <coordinates>\n')
+#                       if (iii == 1):
+#                           kml.write ('         </coordinates>\n')
+#                           kml.write ('         </LinearRing>\n')
+#                           kml.write ('         </outerBoundaryIs>\n')
+#                           kml.write ('         <innerBoundaryIs>\n')
+#                           kml.write ('         <LinearRing>\n')
+#                           kml.write ('         <coordinates>\n')
 
-#                                         if (iii > 1):
-#                                           kml.write ('         </coordinates>\n')
-#                                           kml.write ('         </LinearRing>\n')
-#                                           kml.write ('         </innerBoundaryIs>\n')
-#                                           kml.write ('         <innerBoundaryIs>\n')
-#                                           kml.write ('         <LinearRing>\n')
-#                                           kml.write ('         <coordinates>\n')
+#                       if (iii > 1):
+#                           kml.write ('         </coordinates>\n')
+#                           kml.write ('         </LinearRing>\n')
+#                           kml.write ('         </innerBoundaryIs>\n')
+#                           kml.write ('         <innerBoundaryIs>\n')
+#                           kml.write ('         <LinearRing>\n')
+#                           kml.write ('         <coordinates>\n')
 
-#                                         for jjj in range (len(elem[iii])):
+#                       for jjj in range (len(elem[iii])):
 
-#                                           x1,y1 = elem[iii][jjj][0], elem[iii][jjj][1]
+#                           x1,y1 = elem[iii][jjj][0], elem[iii][jjj][1]
 
-#                                           if geom.isMultipart():
-#                                              pt1 = xform.transform(x1)
-#                                           else:
-#                                              pt1 = xform.transform(QgsPoint(x1, y1))
+#                           if geom.isMultipart():
+#                               pt1 = xform.transform(x1)
+#                           else:
+#                               pt1 = xform.transform(QgsPoint(x1, y1))
 
-#                                           stringazza =   ('%.7lf,%.7lf,0 \n') % (pt1.x(), pt1.y())
-#                                           kml.write (stringazza)
+#                           stringazza =   ('%.7lf,%.7lf,0 \n') % (pt1.x(), pt1.y())
+#                           kml.write (stringazza)
 
-#                                       if (iii == 0):
-#                                          kml.write ('         </coordinates>\n')
-#                                          kml.write ('        </LinearRing>\n')
-#                                          kml.write ('     </outerBoundaryIs>\n')
-#                                          kml.write ('   </Polygon>\n')
+#                        if (iii == 0):
+#                            kml.write ('         </coordinates>\n')
+#                            kml.write ('        </LinearRing>\n')
+#                            kml.write ('     </outerBoundaryIs>\n')
+#                            kml.write ('   </Polygon>\n')
 
-#                                       if (iii > 0):
-#                                          kml.write ('         </coordinates>\n')
-#                                          kml.write ('        </LinearRing>\n')
-#                                          kml.write ('     </innerBoundaryIs>\n')
-#                                          kml.write ('   </Polygon>\n')
+#                        if (iii > 0):
+#                            kml.write ('         </coordinates>\n')
+#                            kml.write ('        </LinearRing>\n')
+#                            kml.write ('     </innerBoundaryIs>\n')
+#                            kml.write ('   </Polygon>\n')
 #  VECCHIO METODO------(chi lascia la vecchia strada...)-------------------
 
 
@@ -1393,10 +1393,10 @@ def GDX_Publisher(self):
                     transform = osr.CoordinateTransformation(source, target)
 
                     testo = geom.exportToWkt()
-#                                       print testo
+#                   print testo
                     istr = testo.split(' ')
-#                                       print istr[0]
-#                                       print istr[3]
+#                   print istr[0]
+#                   print istr[3]
 
                     testo = testo.replace("PolygonZ (", "Polygon (")
                     testo = testo.replace(" 0,", ",")
@@ -1404,7 +1404,7 @@ def GDX_Publisher(self):
                     geometra = ogr.CreateGeometryFromWkt(testo)
                     geometra.Transform(transform)
                     testoKML = geometra.ExportToKML()
-#                                       print testoKML
+#                   print testoKML
 
                     testoKML = testoKML.replace('<Polygon>',extrusion)
 
@@ -1417,7 +1417,7 @@ def GDX_Publisher(self):
                         stringazza = height + '</coordinates>'
                         testoKML = testoKML.replace('</coordinates>', stringazza)
 
-#                                       print testoKML
+#                   print testoKML
                     kml.write (testoKML)
 #  NUOVO METODO------------------------------------------------------------
 
@@ -1458,7 +1458,7 @@ def GDX_Publisher(self):
 
 def GDX_Publisher2(self, kml):
 
-#                               print "GDX_Publisher2 --------------\n"
+#   print "GDX_Publisher2 --------------\n"
 
     mapCanvas = self.iface.mapCanvas()
 
@@ -1565,19 +1565,19 @@ def GDX_Publisher2(self, kml):
     x4 = pt4.x()
     y4 = pt4.y()
 
-#                               kml = ""
+#   kml = ""
 
     #Write kml header
 
-#                               kml = kml + ('<?xml version="1.0" encoding="UTF-8"?>\n')
-#                               kml = kml + ('<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n')
+#   kml = kml + ('<?xml version="1.0" encoding="UTF-8"?>\n')
+#   kml = kml + ('<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n')
     kml = kml + ('    <Document>\n')
 
-#                               kml = kml + ('           <name>QGisView</name>\n')
-#                               kml = kml + ('           <Snippet maxLines="0"></Snippet>\n')
-#                               loc = ("         <description><![CDATA[http://map.project-osrm.org/?loc=%.7lf,%.7lf&ly=1784084387]]></description>\n") %(yc, xc)
-#                               kml = kml + (loc)
-#                               kml = kml + ('       <open>0</open>\n')
+#   kml = kml + ('           <name>QGisView</name>\n')
+#   kml = kml + ('           <Snippet maxLines="0"></Snippet>\n')
+#   loc = ("         <description><![CDATA[http://map.project-osrm.org/?loc=%.7lf,%.7lf&ly=1784084387]]></description>\n") %(yc, xc)
+#   kml = kml + (loc)
+#   kml = kml + ('       <open>0</open>\n')
 
     kml = kml + ('       <Style id="sh_ylw-pushpin">\n')
     kml = kml + ('          <IconStyle>\n')
@@ -1647,60 +1647,60 @@ def GDX_Publisher2(self, kml):
     yc = (y1 + y3) / 2.
     dx = (x3 - x1) * 75000. #100000.
 
-#                               kml = kml + ('                  <LookAt>\n')
-#                               stringazza = ("                    <longitude>%lf</longitude>\n") %(xc)
-#                               kml = kml + (stringazza)
-#                               stringazza = ("                    <latitude>%lf</latitude>\n") %(yc)
-#                               kml = kml + (stringazza)
-#                               kml = kml + ('                     <altitude>0</altitude>\n')
-#                               kml = kml + ('                     <heading>0.00</heading>\n')
-#                               kml = kml + ('                     <tilt>0</tilt>\n')
-#                               stringazza = ("                    <range>%lf</range>\n") %(dx)
-#                               kml = kml + (stringazza)
-#                               kml = kml + ('                     <gx:altitudeMode>relativeToGround</gx:altitudeMode>\n')
-#                               kml = kml + ('                  </LookAt>\n')
+#   kml = kml + ('                  <LookAt>\n')
+#   stringazza = ("                    <longitude>%lf</longitude>\n") %(xc)
+#   kml = kml + (stringazza)
+#   stringazza = ("                    <latitude>%lf</latitude>\n") %(yc)
+#   kml = kml + (stringazza)
+#   kml = kml + ('                     <altitude>0</altitude>\n')
+#   kml = kml + ('                     <heading>0.00</heading>\n')
+#   kml = kml + ('                     <tilt>0</tilt>\n')
+#   stringazza = ("                    <range>%lf</range>\n") %(dx)
+#   kml = kml + (stringazza)
+#   kml = kml + ('                     <gx:altitudeMode>relativeToGround</gx:altitudeMode>\n')
+#   kml = kml + ('                  </LookAt>\n')
 
-#                               kml = kml + ('      <GroundOverlay>\n')
-#                               kml = kml + ('           <name>QGisView</name>\n')
+#   kml = kml + ('      <GroundOverlay>\n')
+#   kml = kml + ('           <name>QGisView</name>\n')
 
-#                               kml = kml + ('          <Icon>\n')
+#   kml = kml + ('          <Icon>\n')
 
-#                               stringazza = ("         <href>%s.png</href>\n") % (nomePNG)
-#                               kml = kml + (stringazza)
-#                               kml = kml + ('                  <viewBoundScale>1.0</viewBoundScale>\n')
-#                               kml = kml + ('          </Icon>\n')
-#                               kml = kml + ('          <gx:LatLonQuad>\n')
-#                               kml = kml + ('                  <coordinates>\n')
+#   stringazza = ("         <href>%s.png</href>\n") % (nomePNG)
+#   kml = kml + (stringazza)
+#   kml = kml + ('                  <viewBoundScale>1.0</viewBoundScale>\n')
+#   kml = kml + ('          </Icon>\n')
+#   kml = kml + ('          <gx:LatLonQuad>\n')
+#   kml = kml + ('                  <coordinates>\n')
 
-#                               stringazza =    ("%.7lf,%.7lf,0 %.7lf,%.7lf,0 %.7lf,%.7lf,0 %.7lf,%.7lf,0\n") % (x1, y1, x2, y2, x3, y3, x4, y4)
-#                               kml = kml + (stringazza)
+#   stringazza =    ("%.7lf,%.7lf,0 %.7lf,%.7lf,0 %.7lf,%.7lf,0 %.7lf,%.7lf,0\n") % (x1, y1, x2, y2, x3, y3, x4, y4)
+#   kml = kml + (stringazza)
 
-#                               kml = kml + ('                  </coordinates>\n')
-#                               kml = kml + ('          </gx:LatLonQuad>\n')
-#                               kml = kml + ('    </GroundOverlay>\n')
+#   kml = kml + ('                  </coordinates>\n')
+#   kml = kml + ('          </gx:LatLonQuad>\n')
+#   kml = kml + ('    </GroundOverlay>\n')
 
-#                               #Write kml footer
-#                               kml = kml + ('</kml>\n')
-#                               #Close kml file
-#                               kml.close()
+#   #Write kml footer
+#   kml = kml + ('</kml>\n')
+#   #Close kml file
+#   kml.close()
 
 
 
     #Export tfw-file
-#                               xScale = (mapRect.xMaximum() - mapRect.xMinimum()) /  image.width()
-#                               yScale = (mapRect.yMaximum() - mapRect.yMinimum()) /  image.height()
+#   xScale = (mapRect.xMaximum() - mapRect.xMinimum()) /  image.width()
+#   yScale = (mapRect.yMaximum() - mapRect.yMinimum()) /  image.height()
 
 
-#                               f = open(out_folder + "/" + nomePNG     + ".pngw", 'w')
-#                               f.write(str(xScale) + '\n')
-#                               f.write(str(0) + '\n')
-#                               f.write(str(0) + '\n')
-#                               f.write('-' + str(yScale) + '\n')
-#                               f.write(str(mapRect.xMinimum()) + '\n')
-#                               f.write(str(mapRect.yMaximum()) + '\n')
-#                               f.write(str(mapRect.xMaximum()) + '\n')
-#                               f.write(str(mapRect.yMinimum()))
-#                               f.close()
+#   f = open(out_folder + "/" + nomePNG     + ".pngw", 'w')
+#   f.write(str(xScale) + '\n')
+#   f.write(str(0) + '\n')
+#   f.write(str(0) + '\n')
+#   f.write('-' + str(yScale) + '\n')
+#   f.write(str(mapRect.xMinimum()) + '\n')
+#   f.write(str(mapRect.yMaximum()) + '\n')
+#   f.write(str(mapRect.xMaximum()) + '\n')
+#   f.write(str(mapRect.yMinimum()))
+#   f.close()
 
 
     nomeLay = "gearthview"   # foo default name
@@ -1951,12 +1951,12 @@ def GDX_Publisher2(self, kml):
             kml = kml +  ('  </Folder>\n')
 
 
-#                               kml = kml +  ('</Folder>\n')
+#           kml = kml +  ('</Folder>\n')
 
-#                               stringazza = ('<Schema name="%s" id="%s">\n') % (nomeLay, nomeLay)
-#                               kml = kml +  (stringazza)
-#                               kml = kml +  (' <SimpleField name="id" type="string"></SimpleField>\n')
-#                               kml = kml +  ('</Schema>\n')
+#           stringazza = ('<Schema name="%s" id="%s">\n') % (nomeLay, nomeLay)
+#           kml = kml +  (stringazza)
+#           kml = kml +  (' <SimpleField name="id" type="string"></SimpleField>\n')
+#           kml = kml +  ('</Schema>\n')
 
     kml = kml +  ('</Document>\n')
     kml = kml +  ('</kml>\n')
@@ -2213,35 +2213,35 @@ class gearthview:
 
 # ----------------------------------------------------
 #    def startQrCoding(self):
-#                               startGeoDrink_Server(self)
+#       startGeoDrink_Server(self)
 
 
 
 #  ------- OLD CODE ------------------------------------------------------
-#                               webServerDir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "python/plugins/gearthview/_WebServer/"
-#                               f = open(webServerDir + 'QGEarth.log', 'r')
-#                               strings = f.readlines()
-#                               west       = float(strings[0])
-#                               south      = float(strings[1])
-#                               east       = float(strings[2])
-#                               north      = float(strings[3])
-#                               lon        = float(strings[4])
-#                               lat        = float(strings[5])
-##                              qrCodeUrl  = strings[6]
-##                              img = qrcode.make('Some data here')
-##                              print img
-#                               canvas = self.iface.mapCanvas()
-#                               mapRenderer = canvas.mapRenderer()
-#                               srs = mapRenderer.destinationCrs()
-#                               crsSrc = QgsCoordinateReferenceSystem(4326)
-#                               crsDest = QgsCoordinateReferenceSystem(srs)
-#                               xform = QgsCoordinateTransform(crsSrc, crsDest)
-#                               pt1 = xform.transform(QgsPoint(west, south))
-#                               pt2 = xform.transform(QgsPoint(east, north))
-#                               box = QgsRectangle(pt1.x(), pt1.y(), pt2.x(), pt2.y())
-#                               self.iface.mapCanvas().setExtent(box)
-#                               self.iface.mapCanvas().refresh()
-#                               f.close()
+#       webServerDir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "python/plugins/gearthview/_WebServer/"
+#       f = open(webServerDir + 'QGEarth.log', 'r')
+#       strings = f.readlines()
+#       west       = float(strings[0])
+#       south      = float(strings[1])
+#       east       = float(strings[2])
+#       north      = float(strings[3])
+#       lon        = float(strings[4])
+#       lat        = float(strings[5])
+#       qrCodeUrl  = strings[6]
+#       img = qrcode.make('Some data here')
+ #      print img
+#       canvas = self.iface.mapCanvas()
+#       mapRenderer = canvas.mapRenderer()
+#       srs = mapRenderer.destinationCrs()
+#       crsSrc = QgsCoordinateReferenceSystem(4326)
+#       crsDest = QgsCoordinateReferenceSystem(srs)
+#       xform = QgsCoordinateTransform(crsSrc, crsDest)
+#       pt1 = xform.transform(QgsPoint(west, south))
+#       pt2 = xform.transform(QgsPoint(east, north))
+#       box = QgsRectangle(pt1.x(), pt1.y(), pt2.x(), pt2.y())
+#       self.iface.mapCanvas().setExtent(box)
+#       self.iface.mapCanvas().refresh()
+#       f.close()
 #  ------- OLD CODE ------------------------------------------------------
 
 
