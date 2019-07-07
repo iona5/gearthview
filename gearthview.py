@@ -60,7 +60,7 @@ import qtreactor.qt4reactor as qt4reactor
 try:
     qt4reactor.install()
 except qt4reactor.ReactorAlreadyInstalledError:
-    print "still installed, doing nothing"
+    print("still installed, doing nothing")
 except AttributeError:
     pass
 except:
