@@ -62,11 +62,6 @@ import resources_rc
 # Import the code for the dialog
 from gearthviewdialog import gearthviewDialog
 
-if QGis.QGIS_VERSION_INT < 10900:
-    from osgeo import gdal
-    from osgeo import gdalnumeric
-    from osgeo import gdalconst
-
 
 ### important
 import qtreactor.qt4reactor as qt4reactor
@@ -487,8 +482,7 @@ def startGeoDrink_Server(self):
 
                 canvas.setExtent(box)
 
-                if QGis.QGIS_VERSION_INT >= 20801:
-                    canvas.setRotation(-lookatHeading)
+                canvas.setRotation(-lookatHeading)
 
 
                 canvas.refresh()
@@ -742,92 +736,52 @@ def GDX_Publisher(self):
 
     iface = qgis.utils.iface
 
-    if QGis.QGIS_VERSION_INT <= 120200:
 
-        mapRenderer = mapCanvas.mapRenderer()
-        mapRect = mapRenderer.extent()
-        width = mapRenderer.width()
-        height = mapRenderer.height()
-        srs = mapRenderer.destinationCrs()
+    mapRenderer = mapCanvas.mapRenderer()
+    mapRect = mapRenderer.extent()
+    width = mapRenderer.width()
+    height = mapRenderer.height()
+    srs = mapRenderer.destinationCrs()
 
-#  OLD version ----------------------------------------------------------
-        # create output image and initialize it
-        image = QImage(QSize(width, height), QImage.Format_ARGB32)
-        image.fill(0)
-        #adjust map canvas (renderer) to the image size and render
-        imagePainter = QPainter(image)
-        zoom = 1
-        target_dpi = int(round(zoom * mapRenderer.outputDpi()))
-        mapRenderer.setOutputSize(QSize(width, height), target_dpi)
-        mapRenderer.render(imagePainter)
-        imagePainter.end()
-#  OLD version ----------------------------------------------------------
+    xN = mapRect.xMinimum()
+    yN = mapRect.yMinimum()
 
-#  NEW version (not working) --------------------------------------------
-#       image = QImage(QPixmap.grabWidget(self.iface.mapCanvas()))
-#  NEW version (not working) --------------------------------------------
+    mapSettings = QgsMapSettings()
+    mapSettings.setMapUnits(0)
+    mapSettings.setExtent(mapRect)
+    DPI = 300
+    mapSettings.setOutputDpi(DPI)
 
-        xN = mapRect.xMinimum()
-        yN = mapRect.yMinimum()
+    mapSettings.setOutputSize(QSize(width, height))
 
-        nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
+    lst = []
+    layerTreeRoot = QgsProject.instance().layerTreeRoot()
+    for id in layerTreeRoot.findLayerIds():
+        node = layerTreeRoot.findLayer(id)
+        lst.append(id)
 
-        input_file = out_folder + "/" + nomePNG + ".png"
+    mapSettings.setLayers(lst)
 
-        #Save the image
-        image.save(input_file, "png")
+    mapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
+    image = QImage(QSize(width, height), QImage.Format_RGB32)
 
-    else:   # ovvero  QGis.QGIS_VERSION_INT > 120200
+    image.fill(0)
 
+    image.setDotsPerMeterX(DPI / 25.4 * 1000)
+    image.setDotsPerMeterY(DPI / 25.4 * 1000)
+    p = QPainter()
+    p.begin(image)
+    mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
+    mapRenderer.start()
+    mapRenderer.waitForFinished()
+    p.end()
 
+    nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
+    input_file = out_folder + "/" + nomePNG + ".png"
 
-        mapRenderer = mapCanvas.mapRenderer()
-        mapRect = mapRenderer.extent()
-        width = mapRenderer.width()
-        height = mapRenderer.height()
-        srs = mapRenderer.destinationCrs()
+    #Save the image
+    image.save(input_file, "png")
 
-        xN = mapRect.xMinimum()
-        yN = mapRect.yMinimum()
-
-        mapSettings = QgsMapSettings()
-        mapSettings.setMapUnits(0)
-        mapSettings.setExtent(mapRect)
-        DPI = 300
-        mapSettings.setOutputDpi(DPI)
-
-        mapSettings.setOutputSize(QSize(width, height))
-
-        lst = []
-        layerTreeRoot = QgsProject.instance().layerTreeRoot()
-        for id in layerTreeRoot.findLayerIds():
-            node = layerTreeRoot.findLayer(id)
-            lst.append(id)
-
-        mapSettings.setLayers(lst)
-
-        mapSettings.setFlags(QgsMapSettings.Antialiasing | QgsMapSettings.UseAdvancedEffects | QgsMapSettings.ForceVectorOutput | QgsMapSettings.DrawLabeling)
-        image = QImage(QSize(width, height), QImage.Format_RGB32)
-
-        image.fill(0)
-
-        image.setDotsPerMeterX(DPI / 25.4 * 1000)
-        image.setDotsPerMeterY(DPI / 25.4 * 1000)
-        p = QPainter()
-        p.begin(image)
-        mapRenderer = QgsMapRendererCustomPainterJob(mapSettings, p)
-        mapRenderer.start()
-        mapRenderer.waitForFinished()
-        p.end()
-
-        nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
-        input_file = out_folder + "/" + nomePNG + ".png"
-
-        #Save the image
-        image.save(input_file, "png")
-
-
-    # EndIf     # QGis.QGIS_VERSION_INT > 120200
 
     layer = mapCanvas.currentLayer()
     crsSrc = srs  # QgsCoordinateReferenceSystem(layer.crs())   # prendere quello attuale
@@ -989,9 +943,7 @@ def GDX_Publisher(self):
     kml.write('             </StyleMap>\n')
     kml.write('NEL MEZZO DEL CAMMIN DI NOSTRA VITA 4\n')
 
-    rotazio = 0.0
-    if QGis.QGIS_VERSION_INT >= 20801:
-        rotazio = -(mapCanvas.rotation())
+    rotazio = -(mapCanvas.rotation())
 
 
     kml.write('      <Folder>\n')
@@ -1986,10 +1938,8 @@ class gearthview:
         # initialize locale
         localePath = ""
 
-        if QGis.QGIS_VERSION_INT < 10900:
-            locale = QSettings().value("locale/userLocale").toString()[0:2]
-        else:
-            locale = QSettings().value("locale/userLocale")[0:2]
+
+        locale = QSettings().value("locale/userLocale")[0:2]
 
         if QFileInfo(self.plugin_dir).exists():
             localePath = self.plugin_dir + "/i18n/gearthview_" + locale + ".qm"
@@ -1997,9 +1947,7 @@ class gearthview:
         if QFileInfo(localePath).exists():
             self.translator = QTranslator()
             self.translator.load(localePath)
-
-            if qVersion() > '4.3.3':
-                QCoreApplication.installTranslator(self.translator)
+            QCoreApplication.installTranslator(self.translator)
 
 
 # ----------------------------------------------------
@@ -2157,53 +2105,48 @@ class gearthview:
             QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
 
-#  Dalla versione 2.14  QGIS permette di esportare anche la coordinata Z ---
+        giaFatto = 0
+        if (GEKml_Polygons > 0):
+            ret = P3dPoints_Write(self, "GEKml_Polygons")
+            giaFatto = 1
 
-        if QGis.QGIS_VERSION_INT >= 21400:
+        if (GEKml_Lines > 0 and giaFatto == 0):
+            ret = P3dPoints_Write(self, "GEKml_Lines")
+            giaFatto = 1
 
-            giaFatto = 0
-            if (GEKml_Polygons > 0):
-                ret = P3dPoints_Write(self, "GEKml_Polygons")
-                giaFatto = 1
+        if (GEKml_Points > 0 and giaFatto == 0):
+            ret = P3dPoints_Write(self, "GEKml_Points")
+            giaFatto = 1
 
-            if (GEKml_Lines > 0 and giaFatto == 0):
-                ret = P3dPoints_Write(self, "GEKml_Lines")
-                giaFatto = 1
+        nomecsv = tumpdir + "/_3dPointsExport/GEKml_3dPoints.csv"
+        nomecsv.replace("\\", "/")
+        uri = """file:///""" + nomecsv + """?"""
+        uri += """type=csv&"""
+        uri += """trimFields=no&"""
+        uri += """xField=X&"""
+        uri += """yField=Y&"""
+        uri += """spatialIndex=yes&"""
+        uri += """subsetIndex=no&"""
+        uri += """watchFile=no&"""
+        uri += """crs=epsg:4326"""
 
-            if (GEKml_Points > 0 and giaFatto == 0):
-                ret = P3dPoints_Write(self, "GEKml_Points")
-                giaFatto = 1
+        for iLayer in range(mapCanvas.layerCount()):
+            layer = mapCanvas.layer(iLayer)
+            if (layer):
+                if layer.name() == "GEKml_3dPoints":
+                    QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
+                if layer.name() == "GEKml_Extrusions":
+                    QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
 
-            nomecsv = tumpdir + "/_3dPointsExport/GEKml_3dPoints.csv"
-            nomecsv.replace("\\", "/")
-            uri = """file:///""" + nomecsv + """?"""
-            uri += """type=csv&"""
-            uri += """trimFields=no&"""
-            uri += """xField=X&"""
-            uri += """yField=Y&"""
-            uri += """spatialIndex=yes&"""
-            uri += """subsetIndex=no&"""
-            uri += """watchFile=no&"""
-            uri += """crs=epsg:4326"""
+        vlayer = QgsVectorLayer(uri, "GEKml_3dPoints", "delimitedtext")
 
-            for iLayer in range(mapCanvas.layerCount()):
-                layer = mapCanvas.layer(iLayer)
-                if (layer):
-                    if layer.name() == "GEKml_3dPoints":
-                        QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
-                    if layer.name() == "GEKml_Extrusions":
-                        QgsMapLayerRegistry.instance().removeMapLayer(layer.id())
+        QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
-            vlayer = QgsVectorLayer(uri, "GEKml_3dPoints", "delimitedtext")
+        nomeqml = tumpdir + "/_3dPointsExport/GEKml_3dPoints.qml"
+        nomeqml.replace("\\", "/")
 
-            QgsMapLayerRegistry.instance().addMapLayer(vlayer)
+        result = vlayer.loadNamedStyle(nomeqml)
 
-            nomeqml = tumpdir + "/_3dPointsExport/GEKml_3dPoints.qml"
-            nomeqml.replace("\\", "/")
-
-            result = vlayer.loadNamedStyle(nomeqml)
-
-# FINE  QGis.QGIS_VERSION_INT >= 21400 ----------------------
 
 
         vlayer.triggerRepaint()
