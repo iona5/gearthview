@@ -73,6 +73,9 @@ from twisted.web.static import File
 
 from osgeo import gdal, ogr, osr
 
+pluginDir =  os.path.dirname(__file__)
+webserverDir = pluginDir + "/_WebServer"
+
 def P3dPoints_Write(self, adesso):
 
     iface = qgis.utils.iface
@@ -170,8 +173,8 @@ def P3dPoints_Write(self, adesso):
 
     if (adesso == "GEKml_Polygons"):
         memLay_Tin.updateFields()
-        tumpdir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "/python/plugins/gearthview/_WebServer"
-        nomeqml = tumpdir + "/GEKml_Extrusions.qml"
+        global webserverDir
+        nomeqml = webserverDir + "/GEKml_Extrusions.qml"
         nomeqml.replace("\\", "/")
 
         result = memLay_Tin.loadNamedStyle(nomeqml)
@@ -195,9 +198,8 @@ gearthview/_WebServer/GEKml_Extrusions.qml
 # ----------------------------------------------------
 def startGeoDrink_Server(self):
     from twisted.web.resource import Resource
-    global serverStarted
+    global serverStarted, webserverDir
 
-    webServerDir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "/python/plugins/gearthview/_WebServer/"
     port = 5558
 
     GDX_Publisher(self)
@@ -436,9 +438,9 @@ def startGeoDrink_Server(self):
 
         root = Resource()
         root.putChild("form", FormPage(self.iface, self.plugin_dir))
-        root.putChild("gaeta", File(webServerDir))
+        root.putChild("gaeta", File(webserverDir))
 
-        cesiumDir = webServerDir + "cesium/"
+        cesiumDir = webserverDir + "cesium/"
         root.putChild("cesium", File(cesiumDir))
 
         reactor.listenTCP(5558, server.Site(root))
@@ -519,9 +521,8 @@ def QGEarth_addPoint(self):
 
 def GDX_Publisher(self):
 
+    global webserverDir
     mapCanvas = self.iface.mapCanvas()
-
-    tumpdir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "/python/plugins/gearthview/_WebServer"
 
     adesso = str(datetime.datetime.now())
     adesso = adesso.replace(" ","_")
@@ -536,13 +537,13 @@ def GDX_Publisher(self):
 
 # HERE IT DELETES THE OLD IMAGE ------------------------------------
 # (if you comment these, images still remain ...  :)
-    for filename in glob.glob(str(tumpdir + '/*.png')) :
+    for filename in glob.glob(str(webserverDir + '/*.png')) :
         os.remove( str(filename) )
-    for filename in glob.glob(str(tumpdir + '/*.pngw')) :
+    for filename in glob.glob(str(webserverDir + '/*.pngw')) :
         os.remove( str(filename) )
 # ------------------------------------------------------------------
 
-    out_folder = tumpdir
+    out_folder = webserverDir
     kml = codecs.open(out_folder + '/doc.kml', 'w', encoding='utf-8')#
 
     mapRenderer = mapCanvas.mapRenderer()
@@ -1030,9 +1031,8 @@ def GDX_Publisher(self):
 
 def GDX_Publisher2(self, kml):
 
+    global webserverDir
     mapCanvas = self.iface.mapCanvas()
-
-    tumpdir = unicode(QFileInfo(QgsApplication.qgisUserDbFilePath()).path()) + "/python/plugins/gearthview/_WebServer"
 
     adesso = str(datetime.datetime.now())
     adesso = adesso.replace(" ","_")
@@ -1046,9 +1046,9 @@ def GDX_Publisher2(self, kml):
 
 # HERE IT DELETES THE OLD IMAGE ------------------------------------
 # (if you comment these, images still remain ...  :)
-    for filename in glob.glob(str(tumpdir + '/*.png')) :
+    for filename in glob.glob(str(webserverDir + '/*.png')) :
         os.remove( str(filename) )
-    for filename in glob.glob(str(tumpdir + '/*.pngw')) :
+    for filename in glob.glob(str(webserverDir + '/*.pngw')) :
         os.remove( str(filename) )
 # ------------------------------------------------------------------
 
@@ -1079,7 +1079,7 @@ def GDX_Publisher2(self, kml):
 
     nomePNG = ("QGisView_%lf_%lf_%s") % (xN, yN, adesso)
 
-    out_folder = tumpdir
+    out_folder = webserverDir
     input_file = out_folder + "/" + nomePNG + ".png"
 
     #Save the image
@@ -1391,7 +1391,7 @@ class gearthview:
 
     def __init__(self, iface):
 
-        global serverStarted
+        global serverStarted, pluginDir
         serverStarted = 0
 
         global lat, lon
@@ -1403,7 +1403,7 @@ class gearthview:
         # Create the dialog and keep reference
         self.dlg = gearthviewDialog()
         # initialize plugin directory
-        self.plugin_dir = QFileInfo(QgsApplication.qgisUserDbFilePath()).path() + "python/plugins/gearthview"
+        self.plugin_dir = pluginDir
         # initialize locale
         localePath = ""
         locale = QSettings().value("locale/userLocale")[0:2]
@@ -1469,6 +1469,7 @@ class gearthview:
 
     def PasteFromGE(self):
 
+        global webserverDir
         mapCanvas = self.iface.mapCanvas()
         copyText = QApplication.clipboard().text()
 #---------       Fix bug paste multiholes  -------------------------
@@ -1476,7 +1477,6 @@ class gearthview:
         copyText = copyText.replace("\t\t\t\t\t</LinearRing>\n\t\t\t\t\t<LinearRing>", "\t\t\t\t</LinearRing>\n\t\t\t</innerBoundaryIs>\n\t\t\t<innerBoundaryIs>\n\t\t\t\t<LinearRing>")
 
 #---------       Fix bug paste multiholes  -------------------------
-        tumpdir = QFileInfo(QgsApplication.qgisUserDbFilePath()).path() + "/python/plugins/gearthview/_WebServer"
 #<Point>         GEKml_Points.kml
 #<LineString>    GEKml_Lines.kml
 #<Polygon>       GEKml_Polygons.kml
@@ -1491,24 +1491,24 @@ class gearthview:
         GEKml_Polygons = copyText.find("<Polygon>")
 
         if (GEKml_Polygons > 0):
-            salvalo2 = codecs.open(tumpdir + "/GEKml_Polygons.kml", 'w', encoding='utf-8')
+            salvalo2 = codecs.open(webserverDir + "/GEKml_Polygons.kml", 'w', encoding='utf-8')
             salvalo2.write (copyText)
             salvalo2.close()
-            vlayer = QgsVectorLayer(tumpdir + "/GEKml_Polygons.kml", "GEKml_Polygons", "ogr")
+            vlayer = QgsVectorLayer(webserverDir + "/GEKml_Polygons.kml", "GEKml_Polygons", "ogr")
             QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
         if (GEKml_Lines > 0):
-            salvalo2 = codecs.open(tumpdir + "/GEKml_Lines.kml", 'w', encoding='utf-8')
+            salvalo2 = codecs.open(webserverDir + "/GEKml_Lines.kml", 'w', encoding='utf-8')
             salvalo2.write (copyText)
             salvalo2.close()
-            vlayer = QgsVectorLayer(tumpdir + "/GEKml_Lines.kml", "GEKml_Lines", "ogr")
+            vlayer = QgsVectorLayer(webserverDir + "/GEKml_Lines.kml", "GEKml_Lines", "ogr")
             QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
         if (GEKml_Points > 0):
-            salvalo2 = codecs.open(tumpdir + "/GEKml_Points.kml", 'w', encoding='utf-8')
+            salvalo2 = codecs.open(webserverDir + "/GEKml_Points.kml", 'w', encoding='utf-8')
             salvalo2.write (copyText)
             salvalo2.close()
-            vlayer = QgsVectorLayer(tumpdir + "/GEKml_Points.kml", "GEKml_Points", "ogr")
+            vlayer = QgsVectorLayer(webserverDir + "/GEKml_Points.kml", "GEKml_Points", "ogr")
             QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
         giaFatto = 0
@@ -1524,7 +1524,7 @@ class gearthview:
             ret = P3dPoints_Write(self, "GEKml_Points")
             giaFatto = 1
 
-        nomecsv = tumpdir + "/_3dPointsExport/GEKml_3dPoints.csv"
+        nomecsv = webserverDir + "/_3dPointsExport/GEKml_3dPoints.csv"
         nomecsv.replace("\\", "/")
         uri = """file:///""" + nomecsv + """?"""
         uri += """type=csv&"""
@@ -1548,7 +1548,7 @@ class gearthview:
 
         QgsMapLayerRegistry.instance().addMapLayer(vlayer)
 
-        nomeqml = tumpdir + "/_3dPointsExport/GEKml_3dPoints.qml"
+        nomeqml = webserverDir + "/_3dPointsExport/GEKml_3dPoints.qml"
         nomeqml.replace("\\", "/")
         result = vlayer.loadNamedStyle(nomeqml)
 
